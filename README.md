@@ -6,7 +6,7 @@ This project is based on [TuneoutDisplay](https://github.com/zmsaunders/TuneoutD
 
 My version keeps the Raspberry Pi smart display / Home Assistant integration concept, but replaces the original voice assistant approach with OpenAI GPT-Realtime speech-to-speech.
 
-I don't intend for anyone to see this project anyways, I'm just an idiot that doesn't know how to use GitHub and decided to click some buttons. Could I have made a private copy of this repo for myself? Probably. Do I know how? Nope. If anyone is reading this, I'm sorry lmao.
+I don't intend for anyone to see this project anyways, I'm just an idiot that doesn't know how to use GitHub and decided to click some buttons. Could I have made a private copy of this repo for myself? Probably. Do I know how? Nope. I already did pushes/pulls with this repo, so there's no going back (I'm lazy). If anyone is reading this, I'm sorry lmao.
 
 ## Full Disclosure
 

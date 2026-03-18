@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # TuneoutDisplay Configuration Script
 # Tested on: Raspberry Pi OS 64-bit (Trixie), kernel 6.12.x
-# Hardware:  Raspberry Pi 4B + ReSpeaker 2-Mic Pi HAT (WM8960)
+# Hardware:  Raspberry Pi 5 + generic audio by default
 #
 # Run this script on a fresh Raspberry Pi OS install, logged in as your
 # normal user (not root). It will use sudo where needed.
@@ -39,7 +39,7 @@ cat << 'EOF'
                       · Display ·
 EOF
 echo -e "${NC}"
-echo -e "  Hardware : ${BOLD}Raspberry Pi 4B + ReSpeaker 2-Mic HAT${NC}"
+echo -e "  Hardware : ${BOLD}Raspberry Pi 5 / generic audio baseline${NC}"
 echo -e "  OS       : ${BOLD}Raspberry Pi OS 64-bit (Trixie)${NC}"
 echo ""
 
@@ -121,8 +121,25 @@ fi
 
 echo ""
 echo "  ── MQTT (for HA device auto-discovery) ──"
-echo "  The MQTT bridge registers volume, brightness, and mic sensitivity"
-echo "  directly in HA — no extra YAML needed."
+echo "  The MQTT bridge always registers display brightness."
+echo "  Audio controls are added when the selected audio profile supports them."
+echo ""
+
+_def="${AUDIO_PROFILE:-generic_usb}"
+read -rp "  Audio profile          [${_def}]: " _in
+AUDIO_PROFILE="${_in:-${_def}}"
+case "$AUDIO_PROFILE" in
+    generic|generic_usb|usb|usb_mic)
+        AUDIO_PROFILE="generic_usb"
+        ;;
+    seeed|seeed_2mic_hat|respeaker|wm8960)
+        AUDIO_PROFILE="seeed_2mic_hat"
+        ;;
+    *)
+        warn "Unknown audio profile '$AUDIO_PROFILE' — defaulting to generic_usb."
+        AUDIO_PROFILE="generic_usb"
+        ;;
+esac
 echo ""
 
 _def="${MQTT_HOST:-homeassistant.local}"
@@ -156,9 +173,9 @@ else
 fi
 
 echo ""
-echo "  Assistant Runtime (saved for later service setup)"
-echo "  These values are stored now so future assistant/runtime services can"
-echo "  start without hand-editing env files on each Pi."
+echo "  Assistant Runtime"
+echo "  These values are stored for the baseline assistant service so future"
+echo "  updates can start without hand-editing env files on each Pi."
 echo ""
 
 _def="${OPENAI_API_KEY:-}"
@@ -203,6 +220,7 @@ printf  "  │  HA server    : %-38s│\n" "$HA_SERVER"
 printf  "  │  Kiosk URL    : %-38s│\n" "$([ -n "$KIOSK_URL" ] && echo "${KIOSK_URL:0:38}" || echo "skipped")"
 printf  "  │  MQTT broker  : %-38s│\n" "${MQTT_HOST}:${MQTT_PORT}"
 printf  "  │  MQTT auth    : %-38s│\n" "$([ -n "$MQTT_USERNAME" ] && echo "yes (${MQTT_USERNAME})" || echo "none")"
+printf  "  │  Audio        : %-38s│\n" "$AUDIO_PROFILE"
 printf  "  │  OpenAI key   : %-38s│\n" "$([ -n "$OPENAI_API_KEY" ] && echo "configured" || echo "not set")"
 printf  "  │  HA token     : %-38s│\n" "$([ -n "$HOME_ASSISTANT_TOKEN" ] && echo "configured" || echo "not set")"
 printf  "  │  OWW model    : %-38s│\n" "$OWW_MODEL"
@@ -223,6 +241,7 @@ MQTT_HOST="$MQTT_HOST"
 MQTT_PORT="$MQTT_PORT"
 MQTT_USERNAME="$MQTT_USERNAME"
 MQTT_PASSWORD="$MQTT_PASSWORD"
+AUDIO_PROFILE="$AUDIO_PROFILE"
 OPENAI_API_KEY="$OPENAI_API_KEY"
 OPENAI_REALTIME_MODEL="$OPENAI_REALTIME_MODEL"
 HOME_ASSISTANT_TOKEN="$HOME_ASSISTANT_TOKEN"
@@ -237,6 +256,10 @@ DEVICE_ID=$(echo "$DEVICE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -
 DEVICE_HOSTNAME=$(hostname)
 ASSISTANT_STATE_PATH="$CURRENT_HOME/.smart-display-assistant/state.json"
 ASSISTANT_MEMORY_PATH="$CURRENT_HOME/.smart-display-assistant/memory"
+USE_SEEED_AUDIO=false
+if [ "$AUDIO_PROFILE" = "seeed_2mic_hat" ]; then
+    USE_SEEED_AUDIO=true
+fi
 
 # ── System Update ─────────────────────────────────────────────────────────────
 section "System Update"
@@ -266,6 +289,8 @@ sudo apt install -y \
 # a leftover from a previous run or pulled in by an unrelated package).
 sudo apt remove --purge -y pipewire-alsa 2>/dev/null || true
 success "Dependencies installed."
+
+if $USE_SEEED_AUDIO; then
 
 # ── ReSpeaker 2-Mic HAT Driver ────────────────────────────────────────────────
 section "ReSpeaker 2-Mic HAT Driver (seeed-voicecard)"
@@ -634,6 +659,42 @@ sudo systemctl enable smart-display-audio-init
 sudo systemctl restart smart-display-audio-init
 success "Audio init service enabled — volume and ALC will be restored on every boot."
 
+else
+
+# ── Generic Audio Baseline ────────────────────────────────────────────────────
+section "Generic Audio Baseline"
+
+info "Skipping ReSpeaker/WM8960 driver setup for audio profile '$AUDIO_PROFILE'."
+info "Configuring a generic PipeWire baseline for Pi 5 and temporary USB audio."
+
+info "Enabling session lingering for $CURRENT_USER..."
+sudo loginctl enable-linger "$CURRENT_USER"
+
+info "Configuring mpv to use PipeWire/PulseAudio backend..."
+mkdir -p "$CURRENT_HOME/.config/mpv"
+cat > "$CURRENT_HOME/.config/mpv/mpv.conf" << 'MPVEOF'
+ao=pulse
+MPVEOF
+
+export XDG_RUNTIME_DIR="/run/user/$USER_ID"
+systemctl --user daemon-reload 2>/dev/null || true
+systemctl --user enable pipewire pipewire-pulse wireplumber 2>/dev/null || true
+systemctl --user restart pipewire wireplumber 2>/dev/null || true
+systemctl --user restart pipewire-pulse 2>/dev/null || true
+sleep 3
+
+if systemctl --user is-active --quiet pipewire 2>/dev/null; then
+    success "PipeWire running."
+else
+    warn "PipeWire not active in this session — will start on next boot/login."
+fi
+
+[ -f "$CURRENT_HOME/.smart-display-tts-volume"   ] || echo "90" > "$CURRENT_HOME/.smart-display-tts-volume"
+[ -f "$CURRENT_HOME/.smart-display-media-volume" ] || echo "75" > "$CURRENT_HOME/.smart-display-media-volume"
+success "Generic audio baseline configured."
+
+fi
+
 # ── Backlight Permissions ─────────────────────────────────────────────────────
 section "Backlight Permissions"
 
@@ -656,6 +717,24 @@ section "sendspin (Music Assistant Native Player)"
 # The client auto-discovers the MA server via mDNS and registers itself by name.
 # Note: Sendspin is currently in technical preview.
 
+SENDSPIN_AUDIO_DEVICE="default"
+SENDSPIN_WANTS="network-online.target"
+SENDSPIN_AFTER="network-online.target"
+MQTT_WANTS="network-online.target"
+MQTT_AFTER="network-online.target"
+ASSISTANT_WANTS="network-online.target smart-display-mqtt.service"
+ASSISTANT_AFTER="network-online.target smart-display-mqtt.service"
+
+if $USE_SEEED_AUDIO; then
+    SENDSPIN_AUDIO_DEVICE="seeed_media"
+    SENDSPIN_WANTS="network-online.target smart-display-audio-init.service"
+    SENDSPIN_AFTER="network-online.target smart-display-audio-init.service"
+    MQTT_WANTS="network-online.target smart-display-audio-init.service"
+    MQTT_AFTER="network-online.target smart-display-audio-init.service"
+    ASSISTANT_WANTS="network-online.target smart-display-audio-init.service smart-display-mqtt.service"
+    ASSISTANT_AFTER="network-online.target smart-display-audio-init.service smart-display-mqtt.service"
+fi
+
 info "Installing sendspin dependency (libportaudio2)..."
 sudo apt install -y libportaudio2
 
@@ -669,13 +748,13 @@ info "Creating sendspin.service..."
 sudo tee /etc/systemd/system/sendspin.service > /dev/null << EOF
 [Unit]
 Description=Sendspin Audio Player (Music Assistant)
-Wants=network-online.target smart-display-audio-init.service
-After=network-online.target smart-display-audio-init.service
+Wants=$SENDSPIN_WANTS
+After=$SENDSPIN_AFTER
 
 [Service]
 Type=simple
 User=$CURRENT_USER
-ExecStart=/opt/sendspin/bin/sendspin daemon --name "$DEVICE_NAME" --audio-device seeed_media
+ExecStart=/opt/sendspin/bin/sendspin daemon --name "$DEVICE_NAME" --audio-device $SENDSPIN_AUDIO_DEVICE
 Restart=always
 RestartSec=5
 
@@ -726,6 +805,7 @@ MQTT_USERNAME=$MQTT_USERNAME
 MQTT_PASSWORD=$MQTT_PASSWORD
 DEVICE_NAME=$DEVICE_NAME
 DEVICE_ID=$(echo "$DEVICE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
+AUDIO_PROFILE=$AUDIO_PROFILE
 ENVEOF
     sudo chmod 600 "$MQTT_ENV_FILE"
 
@@ -733,8 +813,8 @@ ENVEOF
     sudo tee /etc/systemd/system/smart-display-mqtt.service > /dev/null << EOF
 [Unit]
 Description=Smart Display MQTT Bridge
-Wants=network-online.target smart-display-audio-init.service
-After=network-online.target smart-display-audio-init.service
+Wants=$MQTT_WANTS
+After=$MQTT_AFTER
 
 [Service]
 Type=simple
@@ -760,25 +840,39 @@ fi
 # ── Assistant Runtime Environment ────────────────────────────────────────────
 section "Assistant Runtime Environment"
 
-# Save assistant-related settings now so a future on-device runtime can be
+# Save assistant-related settings now so the on-device assistant service can be
 # installed or updated without re-typing API keys and service endpoints.
 ASSISTANT_ENV_FILE="/etc/smart-display/assistant.env"
+printf -v OPENAI_API_KEY_Q '%q' "$OPENAI_API_KEY"
+printf -v OPENAI_REALTIME_MODEL_Q '%q' "$OPENAI_REALTIME_MODEL"
+printf -v HA_SERVER_Q '%q' "$HA_SERVER"
+printf -v HOME_ASSISTANT_TOKEN_Q '%q' "$HOME_ASSISTANT_TOKEN"
+printf -v MQTT_HOST_Q '%q' "$MQTT_HOST"
+printf -v MQTT_PORT_Q '%q' "$MQTT_PORT"
+printf -v MQTT_USERNAME_Q '%q' "$MQTT_USERNAME"
+printf -v MQTT_PASSWORD_Q '%q' "$MQTT_PASSWORD"
+printf -v DEVICE_NAME_Q '%q' "$DEVICE_NAME"
+printf -v DEVICE_ID_Q '%q' "$DEVICE_ID"
+printf -v OWW_MODEL_Q '%q' "$OWW_MODEL"
+printf -v OWW_THRESHOLD_Q '%q' "$OWW_THRESHOLD"
+printf -v ASSISTANT_STATE_PATH_Q '%q' "$ASSISTANT_STATE_PATH"
+printf -v ASSISTANT_MEMORY_PATH_Q '%q' "$ASSISTANT_MEMORY_PATH"
 sudo mkdir -p /etc/smart-display
 sudo tee "$ASSISTANT_ENV_FILE" > /dev/null << ENVEOF
-OPENAI_API_KEY=$OPENAI_API_KEY
-OPENAI_REALTIME_MODEL=$OPENAI_REALTIME_MODEL
-HOME_ASSISTANT_URL=$HA_SERVER
-HOME_ASSISTANT_TOKEN=$HOME_ASSISTANT_TOKEN
-MQTT_HOST=$MQTT_HOST
-MQTT_PORT=$MQTT_PORT
-MQTT_USERNAME=$MQTT_USERNAME
-MQTT_PASSWORD=$MQTT_PASSWORD
-DEVICE_NAME=$DEVICE_NAME
-DEVICE_ID=$DEVICE_ID
-OWW_MODEL=$OWW_MODEL
-OWW_THRESHOLD=$OWW_THRESHOLD
-ASSISTANT_STATE_PATH=$ASSISTANT_STATE_PATH
-ASSISTANT_MEMORY_PATH=$ASSISTANT_MEMORY_PATH
+OPENAI_API_KEY=$OPENAI_API_KEY_Q
+OPENAI_REALTIME_MODEL=$OPENAI_REALTIME_MODEL_Q
+HOME_ASSISTANT_URL=$HA_SERVER_Q
+HOME_ASSISTANT_TOKEN=$HOME_ASSISTANT_TOKEN_Q
+MQTT_HOST=$MQTT_HOST_Q
+MQTT_PORT=$MQTT_PORT_Q
+MQTT_USERNAME=$MQTT_USERNAME_Q
+MQTT_PASSWORD=$MQTT_PASSWORD_Q
+DEVICE_NAME=$DEVICE_NAME_Q
+DEVICE_ID=$DEVICE_ID_Q
+OWW_MODEL=$OWW_MODEL_Q
+OWW_THRESHOLD=$OWW_THRESHOLD_Q
+ASSISTANT_STATE_PATH=$ASSISTANT_STATE_PATH_Q
+ASSISTANT_MEMORY_PATH=$ASSISTANT_MEMORY_PATH_Q
 ASSISTANT_ENABLED=true
 LOG_LEVEL=INFO
 ENVEOF
@@ -786,7 +880,7 @@ sudo chmod 600 "$ASSISTANT_ENV_FILE"
 mkdir -p "$CURRENT_HOME/.smart-display-assistant" "$CURRENT_HOME/.smart-display-assistant/memory"
 chmod 700 "$CURRENT_HOME/.smart-display-assistant" "$CURRENT_HOME/.smart-display-assistant/memory"
 success "Assistant env saved to $ASSISTANT_ENV_FILE"
-info "This file is ready for a future smart-display-assistant service."
+info "This file is used by the smart-display-assistant service."
 
 # ── Assistant Runtime Service ────────────────────────────────────────────────
 section "Assistant Runtime Service"
@@ -801,8 +895,8 @@ info "Creating smart-display-assistant.service..."
 sudo tee /etc/systemd/system/smart-display-assistant.service > /dev/null << EOF
 [Unit]
 Description=Smart Display Assistant Runtime
-Wants=network-online.target smart-display-audio-init.service smart-display-mqtt.service
-After=network-online.target smart-display-audio-init.service smart-display-mqtt.service
+Wants=$ASSISTANT_WANTS
+After=$ASSISTANT_AFTER
 
 [Service]
 Type=simple
@@ -823,6 +917,7 @@ sudo systemctl enable smart-display-assistant
 sudo systemctl restart smart-display-assistant
 success "Assistant runtime service enabled and started."
 
+# Touch scroll daemon
 section "Touch Scroll Daemon"
 
 # labwc (wlroots) emulates the FT5x06 touchscreen as a pointer device, so

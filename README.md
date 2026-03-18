@@ -1,6 +1,12 @@
 # TuneoutDisplay
 
-A countertop smart display shell built on Raspberry Pi with a Home Assistant kiosk, Music Assistant playback, and full HA device integration via MQTT.
+## Credits
+
+This project is based on [TuneoutDisplay](https://github.com/zmsaunders/TuneoutDisplay) by [zmsaunders](https://github.com/zmsaunders).
+
+My version keeps the Raspberry Pi smart display / Home Assistant integration concept, but replaces the original LVA/Home Assistant voice pipeline approach with OpenAI GPT-Realtime speech-to-speech.
+
+I don't intend for anyone to see this project anyways, I'm just an idiot that doesn't know how to use GitHub and decided to click some buttons. Could I have made a private copy of this repo for myself? Probably. Do I know how? Nope. If anyone is reading this, I'm sorry lmao.
 
 ## Full Disclosure
 
@@ -14,8 +20,8 @@ This is a project I work on in the evenings, and the initial build and scripting
 |---|---|
 | SBC | Raspberry Pi 4B (1 or 2 GB RAM) |
 | Microphone / Audio | KEYESTUDIO ReSpeaker 2-Mic Pi HAT (WM8960 codec) |
-| Display | Raspberry Pi Official 7" DSI Touchscreen |
-| Speaker | 3W 8Ω |
+| Display | Raspberry Pi Official 7" DSI Touchscreen | 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
+| Speaker | 3W 8 ohm |
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
 | Compositor | labwc (Wayland) |
 
@@ -23,20 +29,20 @@ This is a project I work on in the evenings, and the initial build and scripting
 
 ## Features
 
-- **HA Lovelace kiosk** — Chromium in kiosk mode, launches automatically after boot and waits for HA to be reachable before opening
-- **Voice-runtime ready shell** — Kiosk, audio, MQTT, and touch pieces are set up independently so you can plug in your own assistant runtime
-- **Music Assistant playback** — Sendspin native player; appears automatically in MA 2.7+
-- **MQTT auto-discovery** — Device registers itself in HA with Voice Volume, Media Volume, Brightness, and Mic Sensitivity entities — no YAML needed
-- **Touch scrolling** — Daemon translates touchscreen swipe gestures into scroll-wheel events for labwc/Wayland
-- **Independent volume channels** — TTS/voice and media are separate ALSA softvol streams, each with its own HA slider
-- **Per-device mic tuning** — Mic sensitivity is adjustable from HA, persists across reboots, useful for different room sizes and placements
+- **HA Lovelace kiosk** - Chromium in kiosk mode, launches automatically after boot and waits for HA to be reachable before opening
+- **Voice-runtime ready shell** - Kiosk, audio, MQTT, and touch pieces are set up independently so you can plug in your own assistant runtime
+- **Music Assistant playback** - Sendspin native player; appears automatically in MA 2.7+
+- **MQTT auto-discovery** - Device registers itself in HA with Voice Volume, Media Volume, Brightness, and Mic Sensitivity entities - no YAML needed
+- **Touch scrolling** - Daemon translates touchscreen swipe gestures into scroll-wheel events for labwc/Wayland
+- **Independent volume channels** - TTS/voice and media are separate ALSA softvol streams, each with its own HA slider
+- **Per-device mic tuning** - Mic sensitivity is adjustable from HA, persists across reboots, useful for different room sizes and placements
 
 ---
 
 ## Repo Structure
 
-```
-configure.sh              # Main setup script — run once on a fresh install (idempotent, re-runnable)
+```text
+configure.sh              # Main setup script - run once on a fresh install (idempotent, re-runnable)
 mqtt-bridge.py            # MQTT auto-discovery bridge for HA device entities
 touch-scroll.py           # Touch-to-scroll daemon (uinput virtual device)
 lovelace/
@@ -71,18 +77,18 @@ chmod +x configure.sh
 The script prompts you for:
 - Device name (used as the HA device name and Music Assistant player name)
 - Home Assistant URL
-- Lovelace kiosk URL (optional — skip to set up kiosk manually later)
+- Lovelace kiosk URL (optional - skip to set up kiosk manually later)
 - MQTT broker host, port, username, and password
 - assistant runtime settings such as OpenAI API key, HA token, wake word model, and realtime model
 
-Settings are saved after the first run — re-running the script will pre-fill all prompts with your previous values, so you only need to change what's different.
+Settings are saved after the first run - re-running the script will pre-fill all prompts with your previous values, so you only need to change what's different.
 MQTT settings are stored in `/etc/smart-display/mqtt.env`, and assistant/runtime settings are stored in `/etc/smart-display/assistant.env`.
 
 The script installs and configures everything automatically, then offers to reboot when done.
 
 ### 2. Verify MQTT device
 
-In HA go to **Settings → Devices & Services → MQTT** and look for your device name. It should appear automatically with these entities:
+In HA go to **Settings -> Devices & Services -> MQTT** and look for your device name. It should appear automatically with these entities:
 
 - Voice Volume (number)
 - Media Volume (number)
@@ -96,7 +102,7 @@ If it doesn't appear, check that MQTT discovery is enabled in the MQTT integrati
 The custom card gives you volume and brightness controls in any HA dashboard. Its status and mute chip can be preserved later by exposing compatible entities from your assistant runtime.
 
 1. Copy `lovelace/smart-display-card.js` to `/config/www/` on your HA instance
-2. In HA go to **Settings → Dashboards → ⋮ → Resources → Add**
+2. In HA go to **Settings -> Dashboards -> Resources -> Add**
    - URL: `/local/smart-display-card.js`
    - Type: JavaScript module
 3. Add the card to a dashboard:
@@ -108,15 +114,15 @@ satellite_entity: assist_satellite.YOUR_DEVICE
 tts_volume_entity: number.YOUR_DEVICE_tts_volume
 media_volume_entity: number.YOUR_DEVICE_media_volume
 brightness_entity: number.YOUR_DEVICE_brightness
-mute_entity: switch.YOUR_DEVICE_mute        # optional — enables chip tap-to-mute
+mute_entity: switch.YOUR_DEVICE_mute        # optional - enables chip tap-to-mute
 mic_gain_entity: number.YOUR_DEVICE_mic_gain  # optional
 ```
 
-Find your exact entity IDs under **Developer Tools → States** and search for your device name. The number entities above come from the MQTT bridge. The status and mute entities are not created by the current base setup and should be supplied later by your assistant runtime if you want to keep that behavior.
+Find your exact entity IDs under **Developer Tools -> States** and search for your device name. The number entities above come from the MQTT bridge. The status and mute entities are not created by the current base setup and should be supplied later by your assistant runtime if you want to keep that behavior.
 
 ### 4. Add swipe navigation between dashboard views (optional)
 
-Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed — it activates automatically on all views.
+Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
 
 ---
 
@@ -141,25 +147,25 @@ sudo systemctl status sendspin smart-display-audio-init \
 
 ## Audio Architecture
 
-```
+```text
 Hardware: WM8960 (seeed2micvoicec)
-           │
-           ▼
-      seeed_dmix         ← ALSA dmix (allows multiple simultaneous writers)
-           │
-      seeed_shared       ← plug over dmix (general use)
-         ┌─┴─┐
-   seeed_tts  seeed_media     ← softvol streams (independent volume controls)
-       │           │
+           |
+           v
+      seeed_dmix         <- ALSA dmix (allows multiple simultaneous writers)
+           |
+      seeed_shared       <- plug over dmix (general use)
+         /       \
+   seeed_tts  seeed_media <- softvol streams (independent volume controls)
+       |           |
  assistant   Sendspin
  (voice/TTS) (music)
 ```
 
 Volume controls:
-- **TTS Volume** — `amixer -c seeed2micvoicec cset "name=TTS Volume" 80%`
-- **Media Volume** — `amixer -c seeed2micvoicec cset "name=Media Volume" 80%`
+- **TTS Volume** - `amixer -c seeed2micvoicec cset "name=TTS Volume" 80%`
+- **Media Volume** - `amixer -c seeed2micvoicec cset "name=Media Volume" 80%`
 
-> **Note:** `pipewire-alsa` must not be installed — it intercepts ALSA calls at the library level and prevents dmix from working. The setup script explicitly removes it. PipeWire remains available for microphone input when you add your own assistant runtime.
+> **Note:** `pipewire-alsa` must not be installed - it intercepts ALSA calls at the library level and prevents dmix from working. The setup script explicitly removes it. PipeWire remains available for microphone input when you add your own assistant runtime.
 
 ---
 
@@ -186,7 +192,7 @@ Re-run `./configure.sh` and enter a new kiosk URL at the prompt, or edit `~/.con
 ## Troubleshooting
 
 **Audio settings don't persist after reboot**
-The seeed DKMS module loads after `alsa-restore` runs. The `smart-display-audio-init` service handles this — check its status and logs. Speaker volume is also re-applied in `~/.config/labwc/autostart` as a safety net.
+The seeed DKMS module loads after `alsa-restore` runs. The `smart-display-audio-init` service handles this - check its status and logs. Speaker volume is also re-applied in `~/.config/labwc/autostart` as a safety net.
 
 **"No MCLK configured" in dmesg / aplay fails**
 The seeed-voicecard DKMS module was built for a different kernel than the one currently running (common after `apt full-upgrade`). Fix:

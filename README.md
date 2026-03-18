@@ -20,7 +20,7 @@ This is a project I work on in the evenings, and the initial build and scripting
 |---|---|
 | SBC | Raspberry Pi 4B (1 or 2 GB RAM) |
 | Microphone / Audio | KEYESTUDIO ReSpeaker 2-Mic Pi HAT (WM8960 codec) |
-| Display | Raspberry Pi Official 7" DSI Touchscreen | 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
+| Display | Raspberry Pi Official 7" DSI Touchscreen OR 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
 | Speaker | 3W 8 ohm |
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
 | Compositor | labwc (Wayland) |

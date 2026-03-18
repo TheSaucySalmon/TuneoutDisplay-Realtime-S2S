@@ -10,7 +10,7 @@ I don't intend for anyone to see this project anyways, I'm just an idiot that do
 
 ## Full Disclosure
 
-Just like the original author, I only work on this project in my spare time. I'm also not the world greatest programmer, so I used codex to help with the recreation of this project.
+Just like the original author, I only work on this project in my spare time. I'm also not the world greatest programmer, so I used Codex to help with the recreation of this project. I'm pretty new to Raspberry Pi's, so I'm still learning everything about them. I also am very new to Linux, since I was raised using Windows. I apologize if anything in here is worded incorrectly.
 
 ---
 
@@ -18,7 +18,7 @@ Just like the original author, I only work on this project in my spare time. I'm
 
 | Component | Details |
 |---|---|
-| SBC | Raspberry Pi 4B (1 or 2 GB RAM) |
+| SBC | Raspberry Pi 5 (4GB or 8GB of Ram) |
 | Microphone / Audio | KEYESTUDIO ReSpeaker 2-Mic Pi HAT (WM8960 codec) |
 | Display | Raspberry Pi Official 7" DSI Touchscreen OR 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
 | Speaker | 3W 8 ohm |

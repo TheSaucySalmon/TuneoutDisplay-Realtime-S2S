@@ -26,6 +26,7 @@ Just like the original author, I only work on this project in my spare time. I'm
 | Compositor | labwc (Wayland) |
 
 I'm not entirely sure if it really matters what version of the Raspberry Pi is used. A Pi 4B was used originally, I just happened to buy a Pi 5 when I started my project. I guess we'll find out. Like I said previously, I'm still pretty new to the Raspberry Pi world, so I'm not familiar with all of it yet.
+
 ---
 
 ## Features

@@ -10,7 +10,7 @@ I don't intend for anyone to see this project anyways, I'm just an idiot that do
 
 ## Full Disclosure
 
-This is a project I work on in the evenings, and the initial build and scripting was created in conjunction with Claude AI. I make no guarantees or warranties, and suggest you read through the code base if you aren't comfortable executing code written by an AI agent. I've made every effort to review it and guide it, but as a side project my biggest concern was having something functional and re-usable. I am 100% open to any pull requests or changes anyone wants to submit.
+Just like the original author, I only work on this project in my spare time. I'm also not the world greatest programmer, so I used codex to help with the recreation of this project.
 
 ---
 

@@ -18,7 +18,7 @@ Just like the original author, I only work on this project in my spare time. I'm
 
 | Component | Details |
 |---|---|
-| SBC | Raspberry Pi 5 (4GB or 8GB of Ram) |
+| SBC | Raspberry Pi 5 (4GB or 8GB of RAM) |
 | Microphone / Audio | KEYESTUDIO ReSpeaker 2-Mic Pi HAT (WM8960 codec) |
 | Display | Raspberry Pi Official 7" DSI Touchscreen OR 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
 | Speaker | 3W 8 ohm |

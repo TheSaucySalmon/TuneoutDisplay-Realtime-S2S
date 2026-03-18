@@ -7,10 +7,10 @@ discovery. HA automatically creates volume and brightness slider entities
 plus a Stop TTS button — no rest_command or input_number YAML required.
 
 Entities created in HA:
-  number  → Voice Volume    (controls assistant/TTS playback via seeed_tts softvol)
-  number  → Media Volume    (controls Music Assistant playback via seeed_media softvol)
   number  → Brightness      (controls DSI backlight)
-  button  → Stop TTS        (kills any in-progress aplay)
+  number  → Voice Volume    (Seeed audio profile only)
+  number  → Media Volume    (Seeed audio profile only)
+  number  → Mic Sensitivity (Seeed audio profile only)
 
 Configuration (set via systemd environment / EnvironmentFile):
   MQTT_HOST      Broker hostname or IP   (default: homeassistant.local)
@@ -38,6 +38,7 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 DEVICE_NAME   = os.getenv("DEVICE_NAME",   "Smart Display")
 DEVICE_ID     = os.getenv("DEVICE_ID",
                     os.uname().nodename.lower().replace("-", "_"))
+AUDIO_PROFILE = os.getenv("AUDIO_PROFILE", "generic_usb")
 
 # ── State file paths ───────────────────────────────────────────────────────────
 HOME           = Path.home()
@@ -91,22 +92,28 @@ def _number(entity_id: str, name: str, icon: str,
 
 # All discovery registrations: (config_topic, payload)
 DISCOVERY = [
-    (config_topic("number", "tts_volume"),
-     _number("tts_volume",   "Voice Volume", "mdi:account-voice")),
-
-    (config_topic("number", "media_volume"),
-     _number("media_volume", "Media Volume", "mdi:music")),
-
     (config_topic("number", "brightness"),
      _number("brightness",   "Brightness",   "mdi:brightness-6", min_=0)),
-
-    (config_topic("number", "mic_gain"),
-     _number("mic_gain",     "Mic Sensitivity", "mdi:microphone-settings")),
-
 ]
 
-COMMAND_TOPICS = {command_topic(e) for e in
-                  ("tts_volume", "media_volume", "brightness", "mic_gain")}
+COMMAND_TOPICS = {command_topic("brightness")}
+
+if AUDIO_PROFILE == "seeed_2mic_hat":
+    DISCOVERY = [
+        (config_topic("number", "tts_volume"),
+         _number("tts_volume",   "Voice Volume", "mdi:account-voice")),
+
+        (config_topic("number", "media_volume"),
+         _number("media_volume", "Media Volume", "mdi:music")),
+
+        (config_topic("number", "brightness"),
+         _number("brightness",   "Brightness",   "mdi:brightness-6", min_=0)),
+
+        (config_topic("number", "mic_gain"),
+         _number("mic_gain",     "Mic Sensitivity", "mdi:microphone-settings")),
+    ]
+    COMMAND_TOPICS = {command_topic(e) for e in
+                      ("tts_volume", "media_volume", "brightness", "mic_gain")}
 
 # ── Hardware helpers ───────────────────────────────────────────────────────────
 def _read_state(path: Path, default: int) -> int:
@@ -189,10 +196,11 @@ def on_connect(client, userdata, connect_flags, reason_code, properties):
         client.publish(topic, json.dumps(payload), retain=True)
 
     # Publish current state so HA sliders reflect actual values immediately
-    client.publish(state_topic("tts_volume"),   str(_read_state(TTS_VOL_FILE,   90)), retain=True)
-    client.publish(state_topic("media_volume"), str(_read_state(MEDIA_VOL_FILE, 75)), retain=True)
     client.publish(state_topic("brightness"),   str(_read_brightness_pct()),           retain=True)
-    client.publish(state_topic("mic_gain"),     str(_read_mic_gain_pct()),             retain=True)
+    if AUDIO_PROFILE == "seeed_2mic_hat":
+        client.publish(state_topic("tts_volume"),   str(_read_state(TTS_VOL_FILE,   90)), retain=True)
+        client.publish(state_topic("media_volume"), str(_read_state(MEDIA_VOL_FILE, 75)), retain=True)
+        client.publish(state_topic("mic_gain"),     str(_read_mic_gain_pct()),             retain=True)
 
     # Subscribe to all command topics
     for topic in COMMAND_TOPICS:

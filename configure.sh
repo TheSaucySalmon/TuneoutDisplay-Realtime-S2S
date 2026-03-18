@@ -60,7 +60,7 @@ fi
 # Check that the companion Python scripts are present alongside configure.sh.
 # SCRIPT_DIR is resolved at the top of the script before any cd commands.
 _MISSING_FILES=()
-for _f in mqtt-bridge.py touch-scroll.py assistant/assistant_service.py assistant/config.py assistant/state.py assistant/__init__.py; do
+for _f in mqtt-bridge.py touch-scroll.py assistant/assistant_service.py assistant/config.py assistant/state.py assistant/audio.py assistant/__init__.py; do
     if [ ! -f "$SCRIPT_DIR/$_f" ]; then
         _MISSING_FILES+=("$_f")
     fi
@@ -210,6 +210,21 @@ _def="${OWW_THRESHOLD:-0.5}"
 read -rp "  Wake threshold          [${_def}]: " _in
 OWW_THRESHOLD="${_in:-${_def}}"
 
+if [ "$AUDIO_PROFILE" = "generic_usb" ]; then
+    echo ""
+    echo "  Generic Audio"
+    echo "  Leave these blank to let the assistant try auto-detection."
+    echo ""
+
+    _def="${GENERIC_MIC_DEVICE:-}"
+    read -rp "  Generic mic device      [${_def:-auto}]: " _in
+    GENERIC_MIC_DEVICE="${_in:-${_def}}"
+
+    _def="${GENERIC_SPEAKER_DEVICE:-}"
+    read -rp "  Generic speaker device  [${_def:-auto}]: " _in
+    GENERIC_SPEAKER_DEVICE="${_in:-${_def}}"
+fi
+
 unset _def _in
 
 echo ""
@@ -247,6 +262,8 @@ OPENAI_REALTIME_MODEL="$OPENAI_REALTIME_MODEL"
 HOME_ASSISTANT_TOKEN="$HOME_ASSISTANT_TOKEN"
 OWW_MODEL="$OWW_MODEL"
 OWW_THRESHOLD="$OWW_THRESHOLD"
+GENERIC_MIC_DEVICE="${GENERIC_MIC_DEVICE:-}"
+GENERIC_SPEAKER_DEVICE="${GENERIC_SPEAKER_DEVICE:-}"
 SAVEEOF
 chmod 600 "$_SETTINGS_FILE"
 unset _SETTINGS_FILE
@@ -855,6 +872,9 @@ printf -v DEVICE_NAME_Q '%q' "$DEVICE_NAME"
 printf -v DEVICE_ID_Q '%q' "$DEVICE_ID"
 printf -v OWW_MODEL_Q '%q' "$OWW_MODEL"
 printf -v OWW_THRESHOLD_Q '%q' "$OWW_THRESHOLD"
+printf -v AUDIO_PROFILE_Q '%q' "$AUDIO_PROFILE"
+printf -v GENERIC_MIC_DEVICE_Q '%q' "${GENERIC_MIC_DEVICE:-}"
+printf -v GENERIC_SPEAKER_DEVICE_Q '%q' "${GENERIC_SPEAKER_DEVICE:-}"
 printf -v ASSISTANT_STATE_PATH_Q '%q' "$ASSISTANT_STATE_PATH"
 printf -v ASSISTANT_MEMORY_PATH_Q '%q' "$ASSISTANT_MEMORY_PATH"
 sudo mkdir -p /etc/smart-display
@@ -871,6 +891,9 @@ DEVICE_NAME=$DEVICE_NAME_Q
 DEVICE_ID=$DEVICE_ID_Q
 OWW_MODEL=$OWW_MODEL_Q
 OWW_THRESHOLD=$OWW_THRESHOLD_Q
+AUDIO_PROFILE=$AUDIO_PROFILE_Q
+GENERIC_MIC_DEVICE=$GENERIC_MIC_DEVICE_Q
+GENERIC_SPEAKER_DEVICE=$GENERIC_SPEAKER_DEVICE_Q
 ASSISTANT_STATE_PATH=$ASSISTANT_STATE_PATH_Q
 ASSISTANT_MEMORY_PATH=$ASSISTANT_MEMORY_PATH_Q
 ASSISTANT_ENABLED=true

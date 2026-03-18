@@ -10,6 +10,7 @@ import time
 
 import paho.mqtt.client as mqtt
 
+from assistant.audio import AudioStatus, GenericAudioManager
 from assistant.config import AssistantConfig, load_config
 from assistant.state import AssistantStateStore
 
@@ -18,6 +19,9 @@ class AssistantRuntimeService:
     def __init__(self, config: AssistantConfig) -> None:
         self.config = config
         self.state_store = AssistantStateStore(config.state_path, config.mute_path)
+        self.audio_manager = GenericAudioManager(config)
+        self._audio_status: AudioStatus | None = None
+        self._last_audio_probe = 0.0
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"smart-display-assistant-{config.device_id}",
@@ -85,6 +89,90 @@ class AssistantRuntimeService:
                     "icon": "mdi:lan-connect",
                 },
             ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_audio_profile/config",
+                {
+                    "name": "Assistant Audio Profile",
+                    "unique_id": f"{self.config.device_id}_assistant_audio_profile",
+                    "device": device,
+                    "state_topic": self.config.audio_profile_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:tune-vertical",
+                },
+            ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_audio_input/config",
+                {
+                    "name": "Assistant Audio Input",
+                    "unique_id": f"{self.config.device_id}_assistant_audio_input",
+                    "device": device,
+                    "state_topic": self.config.audio_input_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:microphone",
+                },
+            ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_audio_output/config",
+                {
+                    "name": "Assistant Audio Output",
+                    "unique_id": f"{self.config.device_id}_assistant_audio_output",
+                    "device": device,
+                    "state_topic": self.config.audio_output_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:speaker",
+                },
+            ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_audio_status/config",
+                {
+                    "name": "Assistant Audio Status",
+                    "unique_id": f"{self.config.device_id}_assistant_audio_status",
+                    "device": device,
+                    "state_topic": self.config.audio_status_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:information-outline",
+                },
+            ),
+            (
+                f"homeassistant/binary_sensor/{self.config.device_id}/assistant_audio_input_ready/config",
+                {
+                    "name": "Assistant Audio Input Ready",
+                    "unique_id": f"{self.config.device_id}_assistant_audio_input_ready",
+                    "device": device,
+                    "state_topic": self.config.audio_input_ready_topic,
+                    "payload_on": "ON",
+                    "payload_off": "OFF",
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "device_class": "connectivity",
+                    "icon": "mdi:microphone-check",
+                },
+            ),
+            (
+                f"homeassistant/binary_sensor/{self.config.device_id}/assistant_audio_output_ready/config",
+                {
+                    "name": "Assistant Audio Output Ready",
+                    "unique_id": f"{self.config.device_id}_assistant_audio_output_ready",
+                    "device": device,
+                    "state_topic": self.config.audio_output_ready_topic,
+                    "payload_on": "ON",
+                    "payload_off": "OFF",
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "device_class": "connectivity",
+                    "icon": "mdi:speaker-wireless",
+                },
+            ),
         ]
 
     def publish_state(self) -> None:
@@ -92,6 +180,32 @@ class AssistantRuntimeService:
         muted = self.state_store.is_muted()
         self.client.publish(self.config.state_topic, state, retain=True)
         self.client.publish(self.config.mute_state_topic, "ON" if muted else "OFF", retain=True)
+
+    def publish_audio_status(self, status: AudioStatus) -> None:
+        self.client.publish(self.config.audio_profile_topic, status.profile, retain=True)
+        self.client.publish(self.config.audio_input_topic, status.input_device, retain=True)
+        self.client.publish(self.config.audio_output_topic, status.output_device, retain=True)
+        self.client.publish(self.config.audio_status_topic, status.details, retain=True)
+        self.client.publish(self.config.audio_input_ready_topic, "ON" if status.input_ready else "OFF", retain=True)
+        self.client.publish(self.config.audio_output_ready_topic, "ON" if status.output_ready else "OFF", retain=True)
+
+    def refresh_audio_status(self, force: bool = False) -> AudioStatus | None:
+        now = time.time()
+        if not force and (now - self._last_audio_probe) < 30 and self._audio_status is not None:
+            return self._audio_status
+
+        status = self.audio_manager.probe()
+        self._audio_status = status
+        self._last_audio_probe = now
+        self.publish_audio_status(status)
+        logging.info(
+            "Audio profile=%s input=%s output=%s details=%s",
+            status.profile,
+            status.input_device,
+            status.output_device,
+            status.details,
+        )
+        return status
 
     def on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
         if reason_code.is_failure:
@@ -104,6 +218,7 @@ class AssistantRuntimeService:
             client.publish(topic, json.dumps(payload), retain=True)
         client.subscribe(self.config.mute_command_topic)
         self.publish_state()
+        self.refresh_audio_status(force=True)
 
     def on_message(self, client, userdata, msg) -> None:
         if msg.topic != self.config.mute_command_topic:
@@ -126,6 +241,7 @@ class AssistantRuntimeService:
         logging.info("Assistant runtime service started.")
         logging.info("State path: %s", self.config.state_path)
         logging.info("Memory path: %s", self.config.memory_path)
+        logging.info("Audio profile: %s", self.config.audio_profile)
 
         if not self.config.assistant_enabled:
             logging.warning("ASSISTANT_ENABLED is false; service will stay idle but online.")
@@ -133,8 +249,10 @@ class AssistantRuntimeService:
         try:
             while not self._stop_event.wait(1):
                 if self.state_store.is_muted():
+                    self.refresh_audio_status()
                     continue
                 # Placeholder for future OWW + Realtime runtime loop.
+                self.refresh_audio_status()
                 if self.state_store.current_state() != "idle":
                     self.state_store.set_state("idle")
                     self.publish_state()

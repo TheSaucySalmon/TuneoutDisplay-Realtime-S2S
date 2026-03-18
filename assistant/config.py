@@ -25,6 +25,9 @@ class AssistantConfig:
     mute_path: Path
     log_level: str
     assistant_enabled: bool
+    audio_profile: str
+    generic_mic_device: str
+    generic_speaker_device: str
 
     @property
     def base_topic(self) -> str:
@@ -46,6 +49,30 @@ class AssistantConfig:
     def mute_command_topic(self) -> str:
         return f"{self.base_topic}/mute/set"
 
+    @property
+    def audio_profile_topic(self) -> str:
+        return f"{self.base_topic}/audio/profile"
+
+    @property
+    def audio_input_topic(self) -> str:
+        return f"{self.base_topic}/audio/input"
+
+    @property
+    def audio_output_topic(self) -> str:
+        return f"{self.base_topic}/audio/output"
+
+    @property
+    def audio_status_topic(self) -> str:
+        return f"{self.base_topic}/audio/status"
+
+    @property
+    def audio_input_ready_topic(self) -> str:
+        return f"{self.base_topic}/audio/input_ready"
+
+    @property
+    def audio_output_ready_topic(self) -> str:
+        return f"{self.base_topic}/audio/output_ready"
+
 
 def load_config() -> AssistantConfig:
     state_path = Path(os.getenv("ASSISTANT_STATE_PATH", "~/.smart-display-assistant/state.json")).expanduser()
@@ -64,4 +91,7 @@ def load_config() -> AssistantConfig:
         mute_path=mute_path,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         assistant_enabled=_env_bool("ASSISTANT_ENABLED", True),
+        audio_profile=os.getenv("AUDIO_PROFILE", "generic_usb").strip().lower() or "generic_usb",
+        generic_mic_device=os.getenv("GENERIC_MIC_DEVICE", "").strip(),
+        generic_speaker_device=os.getenv("GENERIC_SPEAKER_DEVICE", "").strip(),
     )

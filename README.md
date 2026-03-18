@@ -4,7 +4,7 @@
 
 This project is based on [TuneoutDisplay](https://github.com/zmsaunders/TuneoutDisplay) by [zmsaunders](https://github.com/zmsaunders).
 
-My version keeps the Raspberry Pi smart display / Home Assistant integration concept, but replaces the original LVA/Home Assistant voice pipeline approach with OpenAI GPT-Realtime speech-to-speech.
+My version keeps the Raspberry Pi smart display / Home Assistant integration concept, but replaces the original voice assistant approach with OpenAI GPT-Realtime speech-to-speech.
 
 I don't intend for anyone to see this project anyways, I'm just an idiot that doesn't know how to use GitHub and decided to click some buttons. Could I have made a private copy of this repo for myself? Probably. Do I know how? Nope. If anyone is reading this, I'm sorry lmao.
 
@@ -79,7 +79,7 @@ The script prompts you for:
 - Home Assistant URL
 - Lovelace kiosk URL (optional - skip to set up kiosk manually later)
 - MQTT broker host, port, username, and password
-- assistant runtime settings such as OpenAI API key, HA token, wake word model, and realtime model
+- assistant runtime settings such as OpenAI API key, HA token, activation model, and realtime model
 
 Settings are saved after the first run - re-running the script will pre-fill all prompts with your previous values, so you only need to change what's different.
 MQTT settings are stored in `/etc/smart-display/mqtt.env`, and assistant/runtime settings are stored in `/etc/smart-display/assistant.env`.
@@ -173,7 +173,7 @@ Volume controls:
 
 ### Mic sensitivity
 
-Adjust the **Mic Sensitivity** slider in HA (the MQTT entity). Higher values boost the microphone preamplifier, improving far-field wake word detection. The value persists across reboots. Default is 63% (0 dB on the WM8960 Capture PGA).
+Adjust the **Mic Sensitivity** slider in HA (the MQTT entity). Higher values boost the microphone preamplifier for better far-field pickup. The value persists across reboots. Default is 63% (0 dB on the WM8960 Capture PGA).
 
 ### Touch scroll speed
 
@@ -208,7 +208,7 @@ sudo reboot
 - Check `journalctl -u smart-display-mqtt -f` for connection errors
 
 **Voice assistant runtime not installed yet**
-This fork now sets up the display shell only. Add your local wake word and conversation runtime separately.
+This fork now sets up the display shell only. Add your local assistant runtime separately.
 
 **Touch scrolling not working**
 Check the daemon is running: `systemctl status smart-display-touch-scroll`

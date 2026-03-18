@@ -134,6 +134,7 @@ All services are managed by systemd and start automatically on boot.
 
 | Service | Description |
 |---|---|
+| `smart-display-assistant` | Assistant runtime baseline with local state, mute, and MQTT presence |
 | `sendspin` | Music Assistant native player |
 | `smart-display-audio-init` | Restores ALSA mixer state after seeed DKMS module loads |
 | `smart-display-mqtt` | MQTT bridge for HA auto-discovery |
@@ -141,7 +142,7 @@ All services are managed by systemd and start automatically on boot.
 
 Check all service status:
 ```bash
-sudo systemctl status sendspin smart-display-audio-init \
+sudo systemctl status smart-display-assistant sendspin smart-display-audio-init \
   smart-display-mqtt smart-display-touch-scroll
 ```
 
@@ -209,8 +210,8 @@ sudo reboot
 - Verify MQTT discovery is enabled in HA's MQTT integration settings
 - Check `journalctl -u smart-display-mqtt -f` for connection errors
 
-**Voice assistant runtime not installed yet**
-This fork now sets up the display shell only. Add your local assistant runtime separately.
+**Assistant runtime is online but not conversational yet**
+The baseline assistant service handles local state, mute, and MQTT presence. OpenWakeWord and OpenAI Realtime session handling are still the next implementation steps.
 
 **Touch scrolling not working**
 Check the daemon is running: `systemctl status smart-display-touch-scroll`

@@ -60,7 +60,7 @@ fi
 # Check that the companion Python scripts are present alongside configure.sh.
 # SCRIPT_DIR is resolved at the top of the script before any cd commands.
 _MISSING_FILES=()
-for _f in mqtt-bridge.py touch-scroll.py; do
+for _f in mqtt-bridge.py touch-scroll.py assistant/assistant_service.py assistant/config.py assistant/state.py assistant/__init__.py; do
     if [ ! -f "$SCRIPT_DIR/$_f" ]; then
         _MISSING_FILES+=("$_f")
     fi
@@ -779,6 +779,8 @@ OWW_MODEL=$OWW_MODEL
 OWW_THRESHOLD=$OWW_THRESHOLD
 ASSISTANT_STATE_PATH=$ASSISTANT_STATE_PATH
 ASSISTANT_MEMORY_PATH=$ASSISTANT_MEMORY_PATH
+ASSISTANT_ENABLED=true
+LOG_LEVEL=INFO
 ENVEOF
 sudo chmod 600 "$ASSISTANT_ENV_FILE"
 mkdir -p "$CURRENT_HOME/.smart-display-assistant" "$CURRENT_HOME/.smart-display-assistant/memory"
@@ -786,7 +788,41 @@ chmod 700 "$CURRENT_HOME/.smart-display-assistant" "$CURRENT_HOME/.smart-display
 success "Assistant env saved to $ASSISTANT_ENV_FILE"
 info "This file is ready for a future smart-display-assistant service."
 
-# ── Touch Scroll Daemon ───────────────────────────────────────────────────────
+# ── Assistant Runtime Service ────────────────────────────────────────────────
+section "Assistant Runtime Service"
+
+ASSISTANT_APP_DIR="$CURRENT_HOME/assistant"
+info "Installing assistant runtime package..."
+rm -rf "$ASSISTANT_APP_DIR"
+mkdir -p "$ASSISTANT_APP_DIR"
+cp -R "$SCRIPT_DIR/assistant/." "$ASSISTANT_APP_DIR/"
+
+info "Creating smart-display-assistant.service..."
+sudo tee /etc/systemd/system/smart-display-assistant.service > /dev/null << EOF
+[Unit]
+Description=Smart Display Assistant Runtime
+Wants=network-online.target smart-display-audio-init.service smart-display-mqtt.service
+After=network-online.target smart-display-audio-init.service smart-display-mqtt.service
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+EnvironmentFile=/etc/smart-display/assistant.env
+Environment=PYTHONPATH=$CURRENT_HOME
+WorkingDirectory=$CURRENT_HOME
+ExecStart=/usr/bin/python3 -m assistant.assistant_service
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable smart-display-assistant
+sudo systemctl restart smart-display-assistant
+success "Assistant runtime service enabled and started."
+
 section "Touch Scroll Daemon"
 
 # labwc (wlroots) emulates the FT5x06 touchscreen as a pointer device, so
@@ -1016,7 +1052,7 @@ The base setup also saves a starter assistant config file at:
 /etc/smart-display/assistant.env
 ```
 
-This is where future OpenWakeWord / OpenAI Realtime services should read:
+This is where the assistant runtime reads:
 - OpenAI API key and model
 - Home Assistant URL/token
 - MQTT connection details
@@ -1029,7 +1065,10 @@ This is where future OpenWakeWord / OpenAI Realtime services should read:
 
 ```bash
 # Check all service status
-sudo systemctl status sendspin smart-display-mqtt smart-display-touch-scroll
+sudo systemctl status smart-display-assistant sendspin smart-display-mqtt smart-display-touch-scroll
+
+# Live assistant runtime logs
+journalctl -u smart-display-assistant -f
 
 # Live MQTT bridge logs
 journalctl -u smart-display-mqtt -f
@@ -1067,7 +1106,7 @@ echo "  │  1. Reboot the device (required for driver changes)         │"
 echo "  │                                                             │"
 echo "  │  2. Confirm MQTT entities appear in Home Assistant.         │"
 echo "  │                                                             │"
-echo "  │  3. Add your custom assistant runtime separately.           │"
+echo "  │  3. Assistant runtime baseline is installed and running.    │"
 echo "  │     Saved env file: /etc/smart-display/assistant.env        │"
 echo "  │                                                             │"
 echo "  │  4. Music Assistant (2.7+): Sendspin is always-on in MA.    │"
@@ -1078,9 +1117,10 @@ echo "  │  5. Configure kiosk and test the display shell.             │"
 echo "  └─────────────────────────────────────────────────────────────┘"
 echo ""
 echo "  To check all service status after reboot:"
-echo "    sudo systemctl status sendspin smart-display-mqtt smart-display-touch-scroll"
+echo "    sudo systemctl status smart-display-assistant sendspin smart-display-mqtt smart-display-touch-scroll"
 echo ""
 echo "  To follow live logs:"
+echo "    sudo journalctl -u smart-display-assistant -f"
 echo "    sudo journalctl -u smart-display-mqtt -f"
 echo ""
 

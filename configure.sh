@@ -814,15 +814,22 @@ if [ -f "$MQTT_SCRIPT" ]; then
 
     # Write an EnvironmentFile so credentials never appear in ps/journalctl output
     MQTT_ENV_FILE="/etc/smart-display/mqtt.env"
+    printf -v MQTT_HOST_Q '%q' "$MQTT_HOST"
+    printf -v MQTT_PORT_Q '%q' "$MQTT_PORT"
+    printf -v MQTT_USERNAME_Q '%q' "$MQTT_USERNAME"
+    printf -v MQTT_PASSWORD_Q '%q' "$MQTT_PASSWORD"
+    printf -v DEVICE_NAME_MQTT_Q '%q' "$DEVICE_NAME"
+    printf -v DEVICE_ID_MQTT_Q '%q' "$DEVICE_ID"
+    printf -v AUDIO_PROFILE_MQTT_Q '%q' "$AUDIO_PROFILE"
     sudo mkdir -p /etc/smart-display
     sudo tee "$MQTT_ENV_FILE" > /dev/null << ENVEOF
-MQTT_HOST=$MQTT_HOST
-MQTT_PORT=$MQTT_PORT
-MQTT_USERNAME=$MQTT_USERNAME
-MQTT_PASSWORD=$MQTT_PASSWORD
-DEVICE_NAME=$DEVICE_NAME
-DEVICE_ID=$(echo "$DEVICE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
-AUDIO_PROFILE=$AUDIO_PROFILE
+MQTT_HOST=$MQTT_HOST_Q
+MQTT_PORT=$MQTT_PORT_Q
+MQTT_USERNAME=$MQTT_USERNAME_Q
+MQTT_PASSWORD=$MQTT_PASSWORD_Q
+DEVICE_NAME=$DEVICE_NAME_MQTT_Q
+DEVICE_ID=$DEVICE_ID_MQTT_Q
+AUDIO_PROFILE=$AUDIO_PROFILE_MQTT_Q
 ENVEOF
     sudo chmod 600 "$MQTT_ENV_FILE"
 

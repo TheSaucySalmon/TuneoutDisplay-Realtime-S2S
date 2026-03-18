@@ -19,11 +19,11 @@ Just like the original author, I only work on this project in my spare time. I'm
 | Component | Details |
 |---|---|
 | SBC | Raspberry Pi 5 (4GB or 8GB of RAM) |
-| Microphone / Audio | KEYESTUDIO ReSpeaker 2-Mic Pi HAT (WM8960 codec) |
+| Microphone / Audio | TBD |
 | Display | Raspberry Pi Official 7" DSI Touchscreen OR 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
-| Speaker | 3W 8 ohm |
+| Speaker | 3W 8 ohm (TBD) |
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
-| Compositor | labwc (Wayland) |
+| Compositor | Not a clue |
 
 I'm not entirely sure if it really matters what version of the Raspberry Pi is used. A Pi 4B was used originally, I just happened to buy a Pi 5 when I started my project. I guess we'll find out. Like I said previously, I'm still pretty new to the Raspberry Pi world, so I'm not familiar with all of it yet.
 

@@ -4,13 +4,16 @@
  *
  * Config example:
  *   type: custom:smart-display-card
- *   name: Smart Display               # optional, defaults to "Smart Display"
- *   satellite_entity: assist_satellite.smart_display
+ *   name: Smart Display
+ *   state_entity: sensor.smart_display_assistant_state
+ *   brightness_entity: number.smart_display_brightness
+ *   mute_entity: switch.smart_display_mute
  *   tts_volume_entity: number.smart_display_tts_volume
  *   media_volume_entity: number.smart_display_media_volume
- *   brightness_entity: number.smart_display_brightness
- *   mute_entity: switch.smart_display_mute   # optional — enables chip tap to mute
- *   mic_gain_entity: number.smart_display_mic_gain   # optional
+ *   mic_gain_entity: number.smart_display_mic_gain
+ *
+ * `state_entity` is preferred for the current assistant runtime.
+ * `satellite_entity` is still supported for older integrations.
  */
 
 (() => {
@@ -18,21 +21,19 @@
     constructor() {
       super();
       this.attachShadow({ mode: 'open' });
-      this._config  = null;
-      this._hass    = null;
-      this._built   = false;
-      this._ttsActive        = false; // true while user is dragging TTS slider
-      this._mediaActive      = false; // true while user is dragging Media slider
-      this._brightnessActive = false; // true while user is dragging Brightness slider
-      this._micActive        = false; // true while user is dragging Mic Sensitivity slider
+      this._config = null;
+      this._hass = null;
+      this._built = false;
+      this._ttsActive = false;
+      this._mediaActive = false;
+      this._brightnessActive = false;
+      this._micActive = false;
     }
 
-    // ── Lovelace lifecycle ─────────────────────────────────────────────────
-
     setConfig(config) {
-      if (!config.satellite_entity)   throw new Error('smart-display-card: satellite_entity is required');
-      if (!config.tts_volume_entity)  throw new Error('smart-display-card: tts_volume_entity is required');
-      if (!config.media_volume_entity) throw new Error('smart-display-card: media_volume_entity is required');
+      if (!config.state_entity && !config.satellite_entity) {
+        throw new Error('smart-display-card: state_entity or satellite_entity is required');
+      }
       this._config = { name: 'Smart Display', ...config };
       if (this._hass) this._ensureBuilt();
     }
@@ -43,19 +44,21 @@
       this._update();
     }
 
-    getCardSize() { return 3; }
+    getCardSize() {
+      let rows = 0;
+      for (const key of ['tts_volume_entity', 'media_volume_entity', 'brightness_entity', 'mic_gain_entity']) {
+        if (this._config?.[key]) rows += 1;
+      }
+      return Math.max(2, rows + 1);
+    }
 
     static getStubConfig() {
       return {
-        satellite_entity:    'assist_satellite.smart_display',
-        tts_volume_entity:   'number.smart_display_tts_volume',
-        media_volume_entity: 'number.smart_display_media_volume',
-        brightness_entity:   'number.smart_display_brightness',
-        mute_entity:         'switch.smart_display_mute',
+        state_entity: 'sensor.smart_display_assistant_state',
+        brightness_entity: 'number.smart_display_brightness',
+        mute_entity: 'switch.smart_display_mute',
       };
     }
-
-    // ── DOM construction (once) ────────────────────────────────────────────
 
     _ensureBuilt() {
       if (this._built || !this._config || !this._hass) return;
@@ -64,15 +67,10 @@
     }
 
     _buildDOM() {
-      const ttsVol    = this._vol(this._config.tts_volume_entity,   90);
-      const mediaVol  = this._vol(this._config.media_volume_entity, 75);
-      const brightness = this._vol(this._config.brightness_entity,  80);
-
       this.shadowRoot.innerHTML = `
         <style>${this._css()}</style>
         <ha-card>
           <div class="card-content">
-
             <div class="header">
               <span class="name">${this._config.name}</span>
               <span class="status-chip" id="chip">
@@ -81,35 +79,10 @@
               </span>
             </div>
 
-            <div class="slider-row">
-              <ha-icon icon="mdi:microphone" title="Assistant volume"></ha-icon>
-              <span class="label">Assistant</span>
-              <input type="range" id="tts-slider" min="0" max="100" value="${ttsVol}">
-              <span class="vol-val" id="tts-val">${Math.round(ttsVol)}%</span>
-            </div>
-
-            <div class="slider-row">
-              <ha-icon icon="mdi:music-note" title="Media volume"></ha-icon>
-              <span class="label">Media</span>
-              <input type="range" id="media-slider" min="0" max="100" value="${mediaVol}">
-              <span class="vol-val" id="media-val">${Math.round(mediaVol)}%</span>
-            </div>
-
-            <div class="slider-row">
-              <ha-icon icon="mdi:brightness-6" title="Brightness"></ha-icon>
-              <span class="label">Brightness</span>
-              <input type="range" id="brightness-slider" min="5" max="100" value="${brightness}">
-              <span class="vol-val" id="brightness-val">${Math.round(brightness)}%</span>
-            </div>
-
-            ${this._config.mic_gain_entity ? `
-            <div class="slider-row">
-              <ha-icon icon="mdi:microphone-settings" title="Mic sensitivity"></ha-icon>
-              <span class="label">Mic Sensitivity</span>
-              <input type="range" id="mic-slider" min="0" max="100" value="${this._vol(this._config.mic_gain_entity, 63)}">
-              <span class="vol-val" id="mic-val">${Math.round(this._vol(this._config.mic_gain_entity, 63))}%</span>
-            </div>` : ''}
-
+            ${this._renderSliderRow('tts_volume_entity', 'tts', 'mdi:microphone', 'Assistant', 0, 100, 90)}
+            ${this._renderSliderRow('media_volume_entity', 'media', 'mdi:music-note', 'Media', 0, 100, 75)}
+            ${this._renderSliderRow('brightness_entity', 'brightness', 'mdi:brightness-6', 'Brightness', 5, 100, 80)}
+            ${this._renderSliderRow('mic_gain_entity', 'mic', 'mdi:microphone-settings', 'Mic Sensitivity', 0, 100, 63)}
           </div>
         </ha-card>
       `;
@@ -117,139 +90,96 @@
       this._bindEvents();
     }
 
-    _bindEvents() {
-      // Status chip → mute toggle
-      this.shadowRoot.getElementById('chip')
-        .addEventListener('click', () => this._chipAction());
-
-      // TTS slider
-      const ttsSlider = this.shadowRoot.getElementById('tts-slider');
-      const ttsVal    = this.shadowRoot.getElementById('tts-val');
-
-      ttsSlider.addEventListener('pointerdown', () => { this._ttsActive = true; });
-      ttsSlider.addEventListener('input',  (e) => { ttsVal.textContent = e.target.value + '%'; });
-      ttsSlider.addEventListener('change', (e) => {
-        this._setVolume(this._config.tts_volume_entity, parseInt(e.target.value));
-        this._ttsActive = false;
-      });
-      ttsSlider.addEventListener('pointerup', () => { this._ttsActive = false; });
-
-      // Media slider
-      const mediaSlider = this.shadowRoot.getElementById('media-slider');
-      const mediaVal    = this.shadowRoot.getElementById('media-val');
-
-      mediaSlider.addEventListener('pointerdown', () => { this._mediaActive = true; });
-      mediaSlider.addEventListener('input',  (e) => { mediaVal.textContent = e.target.value + '%'; });
-      mediaSlider.addEventListener('change', (e) => {
-        this._setVolume(this._config.media_volume_entity, parseInt(e.target.value));
-        this._mediaActive = false;
-      });
-      mediaSlider.addEventListener('pointerup', () => { this._mediaActive = false; });
-
-      // Brightness slider
-      const brightnessSlider = this.shadowRoot.getElementById('brightness-slider');
-      const brightnessVal    = this.shadowRoot.getElementById('brightness-val');
-
-      brightnessSlider.addEventListener('pointerdown', () => { this._brightnessActive = true; });
-      brightnessSlider.addEventListener('input',  (e) => { brightnessVal.textContent = e.target.value + '%'; });
-      brightnessSlider.addEventListener('change', (e) => {
-        this._setVolume(this._config.brightness_entity, parseInt(e.target.value));
-        this._brightnessActive = false;
-      });
-      brightnessSlider.addEventListener('pointerup', () => { this._brightnessActive = false; });
-
-      // Mic Sensitivity slider (optional — only bound if entity is configured)
-      if (this._config.mic_gain_entity) {
-        const micSlider = this.shadowRoot.getElementById('mic-slider');
-        const micVal    = this.shadowRoot.getElementById('mic-val');
-
-        micSlider.addEventListener('pointerdown', () => { this._micActive = true; });
-        micSlider.addEventListener('input',  (e) => { micVal.textContent = e.target.value + '%'; });
-        micSlider.addEventListener('change', (e) => {
-          this._setVolume(this._config.mic_gain_entity, parseInt(e.target.value));
-          this._micActive = false;
-        });
-        micSlider.addEventListener('pointerup', () => { this._micActive = false; });
-      }
+    _renderSliderRow(configKey, prefix, icon, label, min, max, fallback) {
+      const entityId = this._config[configKey];
+      if (!entityId) return '';
+      const value = this._vol(entityId, fallback);
+      return `
+        <div class="slider-row">
+          <ha-icon icon="${icon}" title="${label}"></ha-icon>
+          <span class="label">${label}</span>
+          <input type="range" id="${prefix}-slider" min="${min}" max="${max}" value="${value}">
+          <span class="vol-val" id="${prefix}-val">${Math.round(value)}%</span>
+        </div>
+      `;
     }
 
-    // ── Incremental updates (every hass change) ────────────────────────────
+    _bindEvents() {
+      this.shadowRoot.getElementById('chip').addEventListener('click', () => this._chipAction());
+
+      this._bindSlider('tts', 'tts_volume_entity', '_ttsActive');
+      this._bindSlider('media', 'media_volume_entity', '_mediaActive');
+      this._bindSlider('brightness', 'brightness_entity', '_brightnessActive');
+      this._bindSlider('mic', 'mic_gain_entity', '_micActive');
+    }
+
+    _bindSlider(prefix, configKey, activeFlag) {
+      const entityId = this._config[configKey];
+      const slider = this.shadowRoot.getElementById(`${prefix}-slider`);
+      const valueEl = this.shadowRoot.getElementById(`${prefix}-val`);
+      if (!entityId || !slider || !valueEl) return;
+
+      slider.addEventListener('pointerdown', () => { this[activeFlag] = true; });
+      slider.addEventListener('input', (e) => { valueEl.textContent = e.target.value + '%'; });
+      slider.addEventListener('change', (e) => {
+        this._setNumberValue(entityId, parseInt(e.target.value, 10));
+        this[activeFlag] = false;
+      });
+      slider.addEventListener('pointerup', () => { this[activeFlag] = false; });
+    }
 
     _update() {
       if (!this._built) return;
 
-      // Status chip
       const status = this._status();
-
-      const LABELS = {
-        standby:   'Standby',
-        listening: 'Listening…',
-        responding:'Responding…',
-        muted:     'Muted',
-        unknown:   'Unknown',
+      const labels = {
+        standby: 'Standby',
+        listening: 'Listening...',
+        responding: 'Responding...',
+        muted: 'Muted',
+        unknown: 'Unknown',
       };
-      const COLORS = {
-        standby:   'var(--secondary-text-color)',
-        listening: 'var(--success-color,  #4CAF50)',
-        responding:'var(--info-color,     #03a9f4)',
-        muted:     'var(--warning-color,  #FF9800)',
-        unknown:   'var(--error-color,    #f44336)',
+      const colors = {
+        standby: 'var(--secondary-text-color)',
+        listening: 'var(--success-color, #4CAF50)',
+        responding: 'var(--info-color, #03a9f4)',
+        muted: 'var(--warning-color, #FF9800)',
+        unknown: 'var(--error-color, #f44336)',
       };
-      const color      = COLORS[status] ?? COLORS.unknown;
-      const canMute    = !!this._config.mute_entity;
-      const muteTitle  = status === 'muted' ? 'Tap to unmute' : 'Tap to mute';
-
-      const chip  = this.shadowRoot.getElementById('chip');
-      const dot   = this.shadowRoot.getElementById('dot');
+      const color = colors[status] ?? colors.unknown;
+      const chip = this.shadowRoot.getElementById('chip');
+      const dot = this.shadowRoot.getElementById('dot');
       const label = this.shadowRoot.getElementById('status-label');
+      const canMute = !!this._config.mute_entity;
+      const muteTitle = status === 'muted' ? 'Tap to unmute' : 'Tap to mute';
 
-      label.textContent        = LABELS[status] ?? status;
-      chip.style.color         = color;
-      chip.style.borderColor   = color;
-      chip.style.cursor        = canMute ? 'pointer' : 'default';
-      chip.title               = canMute ? muteTitle : '';
-      dot.style.background     = color;
+      label.textContent = labels[status] ?? status;
+      chip.style.color = color;
+      chip.style.borderColor = color;
+      chip.style.cursor = canMute ? 'pointer' : 'default';
+      chip.title = canMute ? muteTitle : '';
+      dot.style.background = color;
       dot.classList.toggle('pulse', status !== 'standby' && status !== 'muted' && status !== 'unknown');
 
-      // Sliders — only update if user is not currently dragging
-      if (!this._ttsActive) {
-        const v = this._vol(this._config.tts_volume_entity, 90);
-        this.shadowRoot.getElementById('tts-slider').value = v;
-        this.shadowRoot.getElementById('tts-val').textContent = Math.round(v) + '%';
-      }
-      if (!this._mediaActive) {
-        const v = this._vol(this._config.media_volume_entity, 75);
-        this.shadowRoot.getElementById('media-slider').value = v;
-        this.shadowRoot.getElementById('media-val').textContent = Math.round(v) + '%';
-      }
-      if (!this._brightnessActive) {
-        const v = this._vol(this._config.brightness_entity, 80);
-        this.shadowRoot.getElementById('brightness-slider').value = v;
-        this.shadowRoot.getElementById('brightness-val').textContent = Math.round(v) + '%';
-      }
-      if (this._config.mic_gain_entity && !this._micActive) {
-        const v = this._vol(this._config.mic_gain_entity, 63);
-        const s = this.shadowRoot.getElementById('mic-slider');
-        if (s) {
-          s.value = v;
-          this.shadowRoot.getElementById('mic-val').textContent = Math.round(v) + '%';
-        }
-      }
+      this._syncSlider('tts', this._config.tts_volume_entity, this._ttsActive, 90);
+      this._syncSlider('media', this._config.media_volume_entity, this._mediaActive, 75);
+      this._syncSlider('brightness', this._config.brightness_entity, this._brightnessActive, 80);
+      this._syncSlider('mic', this._config.mic_gain_entity, this._micActive, 63);
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
-
     _status() {
-      // Muted takes visual priority — show it regardless of pipeline state.
       if (this._config.mute_entity) {
         const muteState = this._hass?.states[this._config.mute_entity]?.state;
         if (muteState === 'on') return 'muted';
       }
-      const state = this._hass?.states[this._config.satellite_entity]?.state;
+
+      const stateEntity = this._config.state_entity || this._config.satellite_entity;
+      const state = this._hass?.states[stateEntity]?.state;
       if (!state) return 'unknown';
-      if (state === 'idle')                                 return 'standby';
-      if (state === 'listening')                            return 'listening';
+      if (state === 'idle') return 'standby';
+      if (state === 'listening') return 'listening';
       if (state === 'processing' || state === 'responding') return 'responding';
+      if (state === 'muted') return 'muted';
       return 'unknown';
     }
 
@@ -257,25 +187,30 @@
       return parseFloat(this._hass?.states[entityId]?.state ?? fallback);
     }
 
+    _syncSlider(prefix, entityId, active, fallback) {
+      const slider = this.shadowRoot.getElementById(`${prefix}-slider`);
+      const valueEl = this.shadowRoot.getElementById(`${prefix}-val`);
+      if (!entityId || !slider || !valueEl || active) return;
+      const value = this._vol(entityId, fallback);
+      slider.value = value;
+      valueEl.textContent = Math.round(value) + '%';
+    }
+
     _chipAction() {
       if (!this._config.mute_entity) return;
-      const isMuted  = this._hass?.states[this._config.mute_entity]?.state === 'on';
-      const service  = isMuted ? 'turn_off' : 'turn_on';
+      const isMuted = this._hass?.states[this._config.mute_entity]?.state === 'on';
+      const service = isMuted ? 'turn_off' : 'turn_on';
       this._hass.callService('switch', service, { entity_id: this._config.mute_entity });
     }
 
-    _setVolume(entityId, value) {
+    _setNumberValue(entityId, value) {
       this._hass.callService('number', 'set_value', { entity_id: entityId, value });
     }
-
-    // ── Styles ─────────────────────────────────────────────────────────────
 
     _css() {
       return `
         :host { display: block; }
-
         .card-content { padding: 16px 16px 10px; }
-
         .header {
           display: flex;
           align-items: center;
@@ -287,8 +222,6 @@
           font-weight: 500;
           color: var(--primary-text-color);
         }
-
-        /* Status chip */
         .status-chip {
           display: inline-flex;
           align-items: center;
@@ -302,7 +235,6 @@
           user-select: none;
         }
         .status-chip:hover { opacity: 0.72; }
-
         .dot {
           width: 7px;
           height: 7px;
@@ -313,10 +245,8 @@
         .dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
         @keyframes pulse {
           0%, 100% { opacity: 1; }
-          50%       { opacity: 0.2; }
+          50% { opacity: 0.2; }
         }
-
-        /* Slider rows */
         .slider-row {
           display: flex;
           align-items: center;
@@ -334,14 +264,11 @@
           min-width: 36px;
           text-align: right;
         }
-
         ha-icon {
           color: var(--secondary-text-color);
           --mdc-icon-size: 18px;
           flex-shrink: 0;
         }
-
-        /* Range input */
         input[type=range] {
           flex: 1;
           height: 4px;

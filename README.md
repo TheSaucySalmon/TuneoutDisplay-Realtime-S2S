@@ -112,15 +112,16 @@ The custom card gives you volume and brightness controls in any HA dashboard. It
 ```yaml
 type: custom:smart-display-card
 name: My Display
-satellite_entity: assist_satellite.YOUR_DEVICE
-tts_volume_entity: number.YOUR_DEVICE_tts_volume
-media_volume_entity: number.YOUR_DEVICE_media_volume
+state_entity: sensor.YOUR_DEVICE_assistant_state
 brightness_entity: number.YOUR_DEVICE_brightness
-mute_entity: switch.YOUR_DEVICE_mute        # optional - enables chip tap-to-mute
-mic_gain_entity: number.YOUR_DEVICE_mic_gain  # optional
+mute_entity: switch.YOUR_DEVICE_mute
+# Optional later:
+# tts_volume_entity: number.YOUR_DEVICE_tts_volume
+# media_volume_entity: number.YOUR_DEVICE_media_volume
+# mic_gain_entity: number.YOUR_DEVICE_mic_gain
 ```
 
-Find your exact entity IDs under **Developer Tools -> States** and search for your device name. The number entities above come from the MQTT bridge. The status and mute entities are not created by the current base setup and should be supplied later by your assistant runtime if you want to keep that behavior.
+Find your exact entity IDs under **Developer Tools -> States** and search for your device name. The current baseline publishes `sensor.*_assistant_state`, `switch.*_mute`, and `number.*_brightness`. The card also still supports older `assist_satellite.*` style entities if you have them.
 
 ### 4. Add swipe navigation between dashboard views (optional)
 

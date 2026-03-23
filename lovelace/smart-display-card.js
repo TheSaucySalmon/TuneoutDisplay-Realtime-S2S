@@ -210,29 +210,39 @@
     _css() {
       return `
         :host { display: block; }
-        .card-content { padding: 16px 16px 10px; }
+        ha-card {
+          overflow: hidden;
+        }
+        .card-content {
+          padding: 14px 14px 8px;
+          overflow: hidden;
+        }
         .header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 18px;
+          gap: 10px;
+          margin-bottom: 14px;
         }
         .name {
-          font-size: 1.05em;
+          font-size: 1em;
           font-weight: 500;
           color: var(--primary-text-color);
+          min-width: 0;
         }
         .status-chip {
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          padding: 4px 11px;
+          padding: 4px 10px;
           border-radius: 14px;
           font-size: 0.8em;
           font-weight: 500;
           border: 1.5px solid;
           transition: color 0.3s, border-color 0.3s, opacity 0.15s;
           user-select: none;
+          flex-shrink: 0;
+          white-space: nowrap;
         }
         .status-chip:hover { opacity: 0.72; }
         .dot {
@@ -250,27 +260,34 @@
         .slider-row {
           display: flex;
           align-items: center;
-          gap: 10px;
-          margin-bottom: 14px;
+          gap: 8px;
+          margin-bottom: 12px;
+          min-width: 0;
         }
         .label {
-          font-size: 0.86em;
+          font-size: 0.84em;
           color: var(--secondary-text-color);
-          min-width: 62px;
+          min-width: 0;
+          flex: 0 1 76px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .vol-val {
-          font-size: 0.82em;
+          font-size: 0.8em;
           color: var(--secondary-text-color);
-          min-width: 36px;
+          min-width: 34px;
           text-align: right;
+          flex-shrink: 0;
         }
         ha-icon {
           color: var(--secondary-text-color);
-          --mdc-icon-size: 18px;
+          --mdc-icon-size: 17px;
           flex-shrink: 0;
         }
         input[type=range] {
-          flex: 1;
+          flex: 1 1 auto;
+          min-width: 0;
           height: 4px;
           border-radius: 2px;
           -webkit-appearance: none;
@@ -296,6 +313,25 @@
           cursor: pointer;
           border: none;
           box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+        }
+        @media (max-width: 480px) {
+          .card-content {
+            padding: 12px 12px 6px;
+          }
+          .header {
+            margin-bottom: 12px;
+          }
+          .slider-row {
+            gap: 6px;
+          }
+          .label {
+            flex-basis: 64px;
+            font-size: 0.8em;
+          }
+          .vol-val {
+            min-width: 30px;
+            font-size: 0.76em;
+          }
         }
       `;
     }

@@ -64,6 +64,7 @@ CLAUDE.md                 # Technical reference for AI-assisted development
 - Home Assistant running with:
   - **MQTT integration** (Mosquitto) installed and configured
   - **Music Assistant 2.7+** (optional, for Sendspin)
+  - **HACS Addon installed** (Required)
 
 ### 1. Run the configuration script
 
@@ -123,9 +124,25 @@ mute_entity: switch.YOUR_DEVICE_mute
 
 Find your exact entity IDs under **Developer Tools -> States** and search for your device name. The current baseline publishes `sensor.*_assistant_state`, `switch.*_mute`, and `number.*_brightness`. The card also still supports older `assist_satellite.*` style entities if you have them.
 
-### 4. Add swipe navigation between dashboard views (optional)
+### 4. HACS Addons
+
+Included is a drop in YAML file (smart-display-dasboard.yaml) that can be used. You can make your own obviously, but for those who want an easy setup, copy and paste the code into the Raw section of your dashboard. AFter that, select the entities that are associated with said cards. Make sure you have HACS installed. 
 
 Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
+
+Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the dashboard. 
+
+Below is a list of HACS addons required for the included dashboard.
+
+**Bubble Card**
+**Button card**
+**Hue like light card (possibly, haven't decided yet)**
+**Timer Bar**
+**layout-card**
+**Mini-media player**
+**Simple weather card**
+
+
 
 ---
 

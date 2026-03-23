@@ -1,0 +1,87 @@
+# Smart Display kiosk dashboard
+#
+# Import this into Home Assistant via:
+# Settings -> Dashboards -> Smart Display -> Edit dashboard -> Raw configuration editor
+#
+# Replace the placeholder entities below with your own:
+# - sensor.time
+# - weather.forecast_home
+# - camera.front_door
+# - media_player.living_room_display
+# - sensor.solar_power
+# - sensor.solar_energy_today
+#
+# Optional:
+# - If you want the custom assistant controls back in this layout, swap the
+#   media card or the solar card for `custom:smart-display-card`.
+
+title: Smart Display
+views:
+  - title: Home
+    path: smart-display
+    type: custom:grid-layout
+    layout:
+      grid-template-columns: 48% 52%
+      grid-template-rows: 110px 1fr 150px
+      grid-template-areas: |
+        "time weather"
+        "door solar"
+        "media solar"
+      margin: 10px
+      grid-gap: 12px
+      height: calc(100vh - 20px)
+    cards:
+      - type: markdown
+        view_layout:
+          grid-area: time
+        content: >-
+          <div style="padding: 4px 2px;">
+            <div style="font-size: 3.8rem; font-weight: 700; line-height: 1; letter-spacing: -0.05em;">
+              {{ states('sensor.time') }}
+            </div>
+            <div style="font-size: 1rem; opacity: 0.78; margin-top: 8px;">
+              {{ now().strftime('%A, %B %-d') }}
+            </div>
+          </div>
+
+      - type: picture-entity
+        view_layout:
+          grid-area: door
+        entity: camera.front_door
+        name: Front Door
+        camera_view: live
+        show_name: true
+        show_state: false
+        fit_mode: cover
+        aspect_ratio: 4:3
+
+      - type: media-control
+        view_layout:
+          grid-area: media
+        entity: media_player.living_room_display
+
+      - type: weather-forecast
+        view_layout:
+          grid-area: weather
+        entity: weather.forecast_home
+        forecast_type: hourly
+
+      - type: vertical-stack
+        view_layout:
+          grid-area: solar
+        cards:
+          - type: entities
+            title: Solar
+            show_header_toggle: false
+            entities:
+              - entity: sensor.solar_power
+                name: Current production
+              - entity: sensor.solar_energy_today
+                name: Today
+          - type: history-graph
+            title: Solar Trend
+            hours_to_show: 12
+            refresh_interval: 60
+            entities:
+              - entity: sensor.solar_power
+                name: Solar power

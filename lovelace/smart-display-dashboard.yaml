@@ -1,121 +1,414 @@
-# Simple 7-inch smart display dashboard
-#
-# Edit only these parts:
-# 1. Change the entity IDs below to yours
-# 2. Change the grid sizes if you want cards bigger/smaller
-# 3. Move cards by changing each card's `grid-area`
-#
-# Required HACS cards used here:
-# - layout-card
-# - button-card
-#
-# Example areas:
-# "time weather"
-# "door solar"
-# "media solar"
-
 title: Smart Display
+kiosk_mode:
+  hide_header: true
+  hide_sidebar: true
 views:
-  - title: Home
+  - title: Main
     path: smart-display
-    type: custom:grid-layout
-    layout:
-      grid-template-columns: 1fr 1fr
-      grid-template-rows: 110px 1fr 150px
-      grid-template-areas: |
-        "time weather"
-        "door solar"
-        "media solar"
-      grid-gap: 12px
-      margin: 10px
-      height: calc(100vh - 20px)
-    cards:
-      - type: custom:button-card
-        view_layout:
-          grid-area: time
-        show_icon: false
-        show_state: false
-        show_label: true
-        name: |
-          [[[
-            return new Date().toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit'
-            });
-          ]]]
-        label: |
-          [[[
-            return new Date().toLocaleDateString([], {
-              weekday: 'long',
-              month: 'long',
-              day: 'numeric'
-            });
-          ]]]
-        tap_action:
-          action: none
-        hold_action:
-          action: none
-        styles:
-          card:
-            - height: 110px
-            - padding: 0
-          grid:
-            - grid-template-areas: '"n" "l"'
-            - grid-template-columns: 1fr
-            - grid-template-rows: 1fr auto
-          name:
-            - justify-self: center
-            - align-self: end
-            - text-align: center
-            - font-size: 3.2rem
-            - font-weight: 700
-            - line-height: 1
-          label:
-            - justify-self: center
-            - align-self: start
-            - text-align: center
-            - font-size: 1rem
-            - opacity: 0.8
-            - padding-bottom: 14px
-
-      - type: weather-forecast
-        view_layout:
-          grid-area: weather
-        entity: weather.forecast_home
-        forecast_type: hourly
-
-      - type: picture-entity
-        view_layout:
-          grid-area: door
-        entity: camera.front_door
-        name: Front Door
-        camera_view: live
-        show_name: true
-        show_state: false
-        fit_mode: cover
-        aspect_ratio: 4:3
-
-      - type: media-control
-        view_layout:
-          grid-area: media
-        entity: media_player.living_room_display
-
-      - type: vertical-stack
-        view_layout:
-          grid-area: solar
+    type: sections
+    max_columns: 2
+    dense_section_placement: true
+    badges: []
+    sections:
+      - type: grid
+        cards:
+          - type: custom:mushroom-chips-card
+            chips:
+              - type: template
+                content: Overview
+                icon: mdi:view-dashboard
+                tap_action:
+                  action: navigate
+                  navigation_path: /lovelace/smart-display
+              - type: template
+                content: First Floor
+                icon: mdi:home-floor-1
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/first-floor
+              - type: template
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/second-floor
+                icon: mdi:home-floor-2
+                content: Second Floor
+            grid_options:
+              rows: auto
+      - type: grid
+        cards:
+          - type: custom:mushroom-chips-card
+            chips:
+              - type: template
+                icon: mdi:home-floor-3
+                content: Third Floor
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/third-floor
+              - type: template
+                icon: mdi:power-plug-outline
+                content: Energy
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/energy
+            grid_options:
+              rows: auto
+      - type: grid
+        cards:
+          - type: custom:mushroom-template-card
+            primary: '{{ now().strftime(''%-I:%M %p'') }}'
+            secondary: '{{ now().strftime(''%a, %-m/%-d/%y'') }}'
+            layout: vertical
+            fill_container: true
+            icon: ''
+            tap_action:
+              action: none
+            hold_action:
+              action: none
+          - type: custom:mushroom-template-card
+            primary: '{{ states(''weather.kukt'')|title }}'
+            secondary: >
+              {{ state_attr('weather.kukt', 'temperature') }}° {{
+              state_attr('weather.kukt', 'temperature_unit') }}
+            icon: mdi:weather-partly-cloudy
+            grid_options:
+              columns: 6
+              rows: 2
+            features_position: bottom
+            entity: weather.kukt
+            area: home
+            vertical: true
+          - type: custom:mini-media-player
+            entity: media_player.jakes_room_pi
+            name: Pi
+            artwork: cover
+            hide:
+              power: true
+              source: true
+          - show_state: false
+            show_name: true
+            camera_view: live
+            fit_mode: cover
+            type: picture-entity
+            entity: camera.front_doorbell_high_resolution_channel
+            name: Front Door
+            camera_image: camera.front_doorbell_high_resolution_channel
+            aspect_ratio: '4:3'
+      - type: grid
+        cards:
+          - entities:
+              - calendar.calendar
+            days_to_show: 4
+            show_empty_days: true
+            weather:
+              position: date
+              date:
+                show_conditions: true
+                show_high_temp: true
+                show_low_temp: false
+                icon_size: 14px
+                font_size: 12px
+                color: var(--primary-text-color)
+              event:
+                show_conditions: true
+                show_temp: true
+                icon_size: 14px
+                font_size: 12px
+                color: var(--primary-text-color)
+            type: custom:calendar-card-pro
+          - type: custom:layout-break
+          - type: custom:mushroom-climate-card
+            entity: climate.dining_room
+            show_temperature_control: false
+            grid_options:
+              columns: 12
+              rows: 1
+            tap_action:
+              action: more-info
+            collapsible_controls: true
+            fill_container: false
+            hvac_modes: []
+    footer:
+      max_width: 270
+  - type: sections
+    max_columns: 2
+    path: first-floor
+    sections:
+      - type: grid
+        cards:
+          - type: custom:mushroom-chips-card
+            chips:
+              - type: template
+                content: Overview
+                icon: mdi:view-dashboard
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/smart-display
+              - type: template
+                content: First Floor
+                icon: mdi:home-floor-1
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/first-floor
+              - type: template
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/second-floor
+                icon: mdi:home-floor-2
+                content: Second Floor
+            grid_options:
+              rows: auto
+      - type: grid
+        cards:
+          - type: custom:mushroom-chips-card
+            chips:
+              - type: template
+                icon: mdi:home-floor-3
+                content: Third Floor
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/third-floor
+              - type: template
+                icon: mdi:power-plug-outline
+                content: Energy
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/energy
+            grid_options:
+              rows: auto
+      - type: grid
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:bubble-card
+                card_type: button
+                name: Jake's Room Lights
+                icon: mdi:lightbulb-group
+                show_state: false
+                button_action:
+                  tap_action:
+                    action: toggle
+                button_type: switch
+                sub_button:
+                  main: []
+                  bottom: []
+                entity: light.jake_s_lights
+                show_last_changed: false
+                show_last_updated: false
+              - type: custom:bubble-card
+                card_type: sub-buttons
+                rows: 1.625
+                sub_button:
+                  main: []
+                  bottom:
+                    - name: Jake's Room 1
+                      buttons_layout: column
+                      group:
+                        - entity: light.jakes_room_1
+                          name: Jake's Room 1
+                          show_name: true
+                          tap_action:
+                            action: toggle
+                          double_tap_action:
+                            action: more-info
+                        - entity: light.jakes_room_1
+                          sub_button_type: slider
+                          name: Brightness
+                          show_state: false
+                          show_attribute: true
+                          show_name: true
+                          show_last_changed: false
+                          attribute: brightness
+                          tap_to_slide: true
+                          slider_live_update: true
+                          min_value: 0
+                          max_value: 100
+                          read_only_slider: false
+                    - name: Jake's Room 2
+                      buttons_layout: column
+                      group:
+                        - entity: light.jakes_room_2
+                          name: Jake's Room 2
+                          show_state: false
+                          show_last_changed: false
+                          show_name: true
+                          tap_action:
+                            action: toggle
+                          double_tap_action:
+                            action: more-info
+                        - entity: light.jakes_room_2
+                          sub_button_type: slider
+                          name: Brightness
+                          show_name: true
+                          show_attribute: true
+                          attribute: brightness
+                          tap_to_slide: true
+                          slider_live_update: true
+                          min_value: 0
+                          max_value: 100
+      - type: grid
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:bubble-card
+                card_type: button
+                name: Jake's Room Switches
+                icon: mdi:toggle-switch
+                show_state: false
+                button_action:
+                  tap_action:
+                    action: toggle
+                button_type: switch
+                sub_button:
+                  main: []
+                  bottom: []
+                show_last_changed: false
+                show_last_updated: false
+                entity: switch.jake_s_switches
+                tap_action:
+                  action: none
+              - type: custom:bubble-card
+                card_type: sub-buttons
+                sub_button:
+                  main: []
+                  bottom:
+                    - name: Group 2
+                      buttons_layout: column
+                      group:
+                        - entity: switch.jakes_whitenoise_machine
+                          show_state: false
+                          show_name: true
+                          tap_action:
+                            action: toggle
+                          icon: mdi:toggle-switch
+                          name: White Noise
+                        - entity: switch.third_reality_inc_3rsp02064z_2
+                          name: Jake's 3D Printer
+                          icon: mdi:toggle-switch
+                          show_last_updated: false
+                          show_state: false
+                          show_last_changed: false
+                          show_name: true
+                          tap_action:
+                            action: toggle
+                    - name: Group 1
+                      buttons_layout: column
+                      group:
+                        - entity: switch.jake_main_pc
+                          name: Jake's Desktop
+                          show_name: true
+                          icon: mdi:toggle-switch
+                          tap_action:
+                            action: toggle
+                        - entity: switch.third_reality_inc_3rsp02064z
+                          icon: mdi:toggle-switch
+                          name: Jake's Debian Server
+                          show_state: false
+                          show_name: true
+                          tap_action:
+                            action: toggle
+                  bottom_layout: inline
+                rows: 1.625
+    title: First Floor
+    cards: []
+  - type: sections
+    max_columns: 2
+    title: Second Floor
+    path: second-floor
+    sections:
+      - type: grid
+        cards: []
+    dense_section_placement: true
+    cards: []
+  - type: sections
+    max_columns: 2
+    title: Third Floor
+    path: third-floor
+    sections:
+      - type: grid
+        cards: []
+    dense_section_placement: true
+    cards: []
+  - title: Energy
+    path: energy
+    type: sections
+    max_columns: 2
+    dense_section_placement: true
+    badges: []
+    sections:
+      - type: grid
+        cards:
+          - type: custom:mushroom-chips-card
+            chips:
+              - type: template
+                content: Overview
+                icon: mdi:view-dashboard
+                tap_action:
+                  action: navigate
+                  navigation_path: /lovelace/smart-display
+              - type: template
+                content: First Floor
+                icon: mdi:home-floor-1
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/first-floor
+              - type: template
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/second-floor
+                icon: mdi:home-floor-2
+                content: Second Floor
+            grid_options:
+              rows: auto
+      - type: grid
+        cards:
+          - type: custom:mushroom-chips-card
+            chips:
+              - type: template
+                icon: mdi:home-floor-3
+                content: Third Floor
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/third-floor
+              - type: template
+                icon: mdi:power-plug-outline
+                content: Energy
+                tap_action:
+                  action: navigate
+                  navigation_path: /smart-display/energy
+            grid_options:
+              rows: auto
+      - type: grid
         cards:
           - type: entities
             title: Solar
-            show_header_toggle: false
             entities:
-              - entity: sensor.solar_power
-                name: Current production
-              - entity: sensor.solar_energy_today
+              - entity: sensor.home_lifetime_energy
                 name: Today
-          - type: history-graph
-            title: Solar Trend
-            hours_to_show: 12
-            refresh_interval: 60
+              - entity: sensor.home_current_power
+                name: Current production
+            grid_options:
+              columns: 12
+              rows: auto
+          - type: statistics-graph
+            title: Solar
+            chart_type: line
+            period: hour
+            days_to_show: 1
+            stat_types:
+              - change
             entities:
-              - entity: sensor.solar_power
-                name: Solar power
+              - sensor.home_lifetime_energy
+            grid_options:
+              rows: 4
+              columns: 12
+      - type: grid
+        cards:
+          - type: distribution
+            entities:
+              - entity: sensor.third_reality_inc_3rsp02028bz_power
+              - entity: sensor.third_reality_inc_3rsp02064z_power
+              - entity: sensor.third_reality_inc_3rsp02064z_power_2
+              - entity: sensor.third_reality_inc_3rsp02064z_power_3
+      - type: grid
+        cards: []
+    cards: []

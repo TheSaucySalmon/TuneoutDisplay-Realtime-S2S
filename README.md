@@ -130,7 +130,7 @@ Included is a drop in YAML file (smart-display-dasboard.yaml) that can be used. 
 
 Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
 
-Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the dashboard. If you get stuck in the dasboard cause of Kiosk mode, add "?disable_km" at the end of the URL. EX: "http://yourhomeassistantlink:0000/mycooldashboard?disable_km"
+Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the dashboard. If you get stuck in the dasboard cause of Kiosk mode, add "?disable_km" at the end of the URL. EX: `http://yourhomeassistantlink:0000/mycooldashboard?disable_km`
 
 Below is a list of HACS addons required for the included dashboard.
 

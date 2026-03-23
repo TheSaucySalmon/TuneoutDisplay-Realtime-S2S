@@ -140,6 +140,7 @@ Below is a list of HACS addons required for the included dashboard.
 - **Timer Bar**
 - **layout-card**
 - **Mini-media player**
+- **Mushroom** (MOST IMPORTANT REQUIREMENT)
 - **Simple weather card**
 
 

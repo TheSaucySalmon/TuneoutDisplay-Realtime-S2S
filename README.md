@@ -50,7 +50,7 @@ touch-scroll.py           # Touch-to-scroll daemon (uinput virtual device)
 lovelace/
   smart-display-card.js   # Custom Lovelace card (copy to HA /config/www/)
 ha-configuration.md       # Full HA config reference
-CLAUDE.md                 # Technical reference for AI-assisted development
+OPENAI-REALTIME.md        # OpenAI Realtime speech-to-speech implementation notes
 ```
 
 ---

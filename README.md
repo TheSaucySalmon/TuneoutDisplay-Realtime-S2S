@@ -126,7 +126,7 @@ Find your exact entity IDs under **Developer Tools -> States** and search for yo
 
 ### 4. HACS Addons
 
-Included is a drop in YAML file (smart-display-dasboard.yaml) that can be used. You can make your own obviously, but for those who want an easy setup, copy and paste the code into the Raw section of your dashboard. AFter that, select the entities that are associated with said cards. Make sure you have HACS installed. 
+Included is a drop in YAML file (smart-display-dasboard.yaml) that can be used. You can make your own obviously, but for those who want an easy setup, copy and paste the code into the RAW Editor of your dashboard. After that, select the entities that are associated with said cards. Make sure you have HACS installed. 
 
 Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
 

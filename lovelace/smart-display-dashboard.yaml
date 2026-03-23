@@ -8,12 +8,7 @@
 # - weather.forecast_home
 # - camera.front_door
 # - media_player.living_room_display
-# - sensor.solar_power
-# - sensor.solar_energy_today
-#
-# Optional:
-# - If you want the custom assistant controls back in this layout, swap the
-#   media card or the solar card for `custom:smart-display-card`.
+
 
 title: Smart Display
 views:

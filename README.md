@@ -136,7 +136,7 @@ Below is a list of HACS addons required for the included dashboard.
 
 - **Bubble Card**
 - **Button card**
-- **Hue like light card (possibly, haven't decided yet)**
+- **Hue like light card** (possibly, haven't decided yet)
 - **Timer Bar**
 - **layout-card**
 - **Mini-media player**

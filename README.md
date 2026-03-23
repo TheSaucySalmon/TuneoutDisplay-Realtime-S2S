@@ -135,13 +135,10 @@ Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the d
 Below is a list of HACS addons required for the included dashboard.
 
 - **Bubble Card**
-- **Button card**
-- **Hue like light card** (possibly, haven't decided yet)
-- **Timer Bar**
 - **layout-card**
 - **Mini-media player**
 - **Mushroom** (MOST IMPORTANT REQUIREMENT)
-- **Simple weather card**
+- **Ultimate Card**
 
 
 

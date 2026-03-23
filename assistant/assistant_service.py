@@ -13,6 +13,7 @@ import paho.mqtt.client as mqtt
 from assistant.audio import AudioStatus, GenericAudioManager
 from assistant.config import AssistantConfig, load_config
 from assistant.state import AssistantStateStore
+from assistant.wakeword import OpenWakeWordDetector
 
 
 class AssistantRuntimeService:
@@ -20,8 +21,10 @@ class AssistantRuntimeService:
         self.config = config
         self.state_store = AssistantStateStore(config.state_path, config.mute_path)
         self.audio_manager = GenericAudioManager(config)
+        self.wakeword_detector = OpenWakeWordDetector(config, self.audio_manager)
         self._audio_status: AudioStatus | None = None
         self._last_audio_probe = 0.0
+        self._listen_until = 0.0
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"smart-display-assistant-{config.device_id}",
@@ -242,17 +245,38 @@ class AssistantRuntimeService:
         logging.info("State path: %s", self.config.state_path)
         logging.info("Memory path: %s", self.config.memory_path)
         logging.info("Audio profile: %s", self.config.audio_profile)
+        logging.info(
+            "OWW model=%s threshold=%.2f",
+            self.config.oww_model,
+            self.config.oww_threshold,
+        )
 
         if not self.config.assistant_enabled:
             logging.warning("ASSISTANT_ENABLED is false; service will stay idle but online.")
+        else:
+            self.wakeword_detector.start()
 
         try:
             while not self._stop_event.wait(1):
+                status = self.refresh_audio_status()
                 if self.state_store.is_muted():
-                    self.refresh_audio_status()
                     continue
-                # Placeholder for future OWW + Realtime runtime loop.
-                self.refresh_audio_status()
+
+                if status and not status.input_ready:
+                    if self.state_store.current_state() != "error":
+                        self.state_store.set_state("error")
+                        self.publish_state()
+                    continue
+
+                event = self.wakeword_detector.poll()
+                if event is not None:
+                    self.state_store.set_state("listening")
+                    self.publish_state()
+                    self._listen_until = time.time() + self.config.oww_listen_window_seconds
+
+                if self._listen_until and time.time() < self._listen_until:
+                    continue
+
                 if self.state_store.current_state() != "idle":
                     self.state_store.set_state("idle")
                     self.publish_state()
@@ -264,6 +288,8 @@ class AssistantRuntimeService:
             return
         self._stop_event.set()
         logging.info("Assistant runtime service stopping.")
+        with suppress(Exception):
+            self.wakeword_detector.stop()
         with suppress(Exception):
             self.client.publish(self.config.availability_topic, "offline", retain=True)
         with suppress(Exception):

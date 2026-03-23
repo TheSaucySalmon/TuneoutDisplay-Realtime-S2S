@@ -28,6 +28,11 @@ class AssistantConfig:
     audio_profile: str
     generic_mic_device: str
     generic_speaker_device: str
+    oww_model: str
+    oww_threshold: float
+    oww_input_device: str
+    oww_cooldown_seconds: float
+    oww_listen_window_seconds: float
 
     @property
     def base_topic(self) -> str:
@@ -94,4 +99,9 @@ def load_config() -> AssistantConfig:
         audio_profile=os.getenv("AUDIO_PROFILE", "generic_usb").strip().lower() or "generic_usb",
         generic_mic_device=os.getenv("GENERIC_MIC_DEVICE", "").strip(),
         generic_speaker_device=os.getenv("GENERIC_SPEAKER_DEVICE", "").strip(),
+        oww_model=os.getenv("OWW_MODEL", "hey_jarvis").strip() or "hey_jarvis",
+        oww_threshold=float(os.getenv("OWW_THRESHOLD", "0.5")),
+        oww_input_device=os.getenv("OWW_INPUT_DEVICE", "").strip(),
+        oww_cooldown_seconds=float(os.getenv("OWW_COOLDOWN_SECONDS", "8")),
+        oww_listen_window_seconds=float(os.getenv("OWW_LISTEN_WINDOW_SECONDS", "8")),
     )

@@ -113,7 +113,7 @@ def load_config() -> AssistantConfig:
     return AssistantConfig(
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime").strip() or "gpt-realtime",
-        openai_realtime_voice=os.getenv("OPENAI_REALTIME_VOICE", "marin").strip() or "marin",
+        openai_realtime_voice=os.getenv("OPENAI_REALTIME_VOICE", "cedar").strip() or "cedar",
         openai_realtime_instructions=os.getenv(
             "OPENAI_REALTIME_INSTRUCTIONS",
             "You are the household smart display assistant. Reply briefly, clearly, and helpfully.",

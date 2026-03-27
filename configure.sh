@@ -192,7 +192,7 @@ _def="${OPENAI_REALTIME_MODEL:-gpt-realtime}"
 read -rp "  Realtime model          [${_def}]: " _in
 OPENAI_REALTIME_MODEL="${_in:-${_def}}"
 
-_def="${OPENAI_REALTIME_VOICE:-marin}"
+_def="${OPENAI_REALTIME_VOICE:-cedar}"
 read -rp "  Realtime voice          [${_def}]: " _in
 OPENAI_REALTIME_VOICE="${_in:-${_def}}"
 

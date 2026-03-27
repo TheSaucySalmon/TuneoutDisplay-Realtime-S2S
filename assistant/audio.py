@@ -4,7 +4,7 @@ import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Iterable
+from typing import IO, Iterable
 
 from assistant.config import AssistantConfig
 
@@ -62,6 +62,85 @@ class GenericAudioManager:
             output_ready=output_ready,
             details=", ".join(details_parts),
         )
+
+    def capture_device(self) -> str:
+        if self.config.audio_profile == "seeed_2mic_hat":
+            return self.config.generic_mic_device or "default"
+
+        if self.config.generic_mic_device:
+            return self.config.generic_mic_device
+
+        detected = self._detect_arecord_device()
+        return detected or "default"
+
+    def playback_device(self) -> str:
+        if self.config.audio_profile == "seeed_2mic_hat":
+            return "seeed_tts"
+        return self.config.generic_speaker_device or "default"
+
+    def start_capture_process(self, sample_rate: int) -> subprocess.Popen[bytes]:
+        command = [
+            "arecord",
+            "-q",
+            "-D",
+            self.capture_device(),
+            "-r",
+            str(sample_rate),
+            "-f",
+            "S16_LE",
+            "-c",
+            "1",
+            "-t",
+            "raw",
+        ]
+        logging.info("Starting capture command: %s", " ".join(command))
+        return subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def start_playback_process(self, sample_rate: int) -> subprocess.Popen[bytes]:
+        command = [
+            "aplay",
+            "-q",
+            "-D",
+            self.playback_device(),
+            "-r",
+            str(sample_rate),
+            "-f",
+            "S16_LE",
+            "-c",
+            "1",
+            "-t",
+            "raw",
+        ]
+        logging.info("Starting playback command: %s", " ".join(command))
+        return subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def stop_process(self, process: subprocess.Popen[bytes] | None, stream: IO[bytes] | None = None) -> None:
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+        if process is None:
+            return
+
+        if process.poll() is None:
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    process.kill()
 
     def _detect_arecord_device(self) -> str:
         output = self._run_lines(["arecord", "-L"])

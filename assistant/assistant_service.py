@@ -12,6 +12,7 @@ import paho.mqtt.client as mqtt
 
 from assistant.audio import AudioStatus, GenericAudioManager
 from assistant.config import AssistantConfig, load_config
+from assistant.realtime import OpenAIRealtimeClient, RealtimeConversationResult, RealtimeSessionController
 from assistant.state import AssistantStateStore
 from assistant.wakeword import OpenWakeWordDetector
 
@@ -22,9 +23,11 @@ class AssistantRuntimeService:
         self.state_store = AssistantStateStore(config.state_path, config.mute_path)
         self.audio_manager = GenericAudioManager(config)
         self.wakeword_detector = OpenWakeWordDetector(config, self.audio_manager)
+        self.realtime_client = OpenAIRealtimeClient(config, self.audio_manager)
+        self.realtime_session = RealtimeSessionController(self.realtime_client)
         self._audio_status: AudioStatus | None = None
         self._last_audio_probe = 0.0
-        self._listen_until = 0.0
+        self._realtime_status = "idle"
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"smart-display-assistant-{config.device_id}",
@@ -48,6 +51,59 @@ class AssistantRuntimeService:
             "sw_version": "0.1",
         }
         return [
+            (
+                f"homeassistant/button/{self.config.device_id}/assistant_trigger/config",
+                {
+                    "name": "Assistant Trigger",
+                    "unique_id": f"{self.config.device_id}_assistant_trigger",
+                    "device": device,
+                    "command_topic": self.config.realtime_trigger_topic,
+                    "payload_press": "PRESS",
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:microphone-message",
+                },
+            ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_realtime_status/config",
+                {
+                    "name": "Assistant Realtime Status",
+                    "unique_id": f"{self.config.device_id}_assistant_realtime_status",
+                    "device": device,
+                    "state_topic": self.config.realtime_status_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:websocket",
+                },
+            ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_last_transcript/config",
+                {
+                    "name": "Assistant Last Transcript",
+                    "unique_id": f"{self.config.device_id}_assistant_last_transcript",
+                    "device": device,
+                    "state_topic": self.config.transcript_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:account-voice",
+                },
+            ),
+            (
+                f"homeassistant/sensor/{self.config.device_id}/assistant_last_response/config",
+                {
+                    "name": "Assistant Last Response",
+                    "unique_id": f"{self.config.device_id}_assistant_last_response",
+                    "device": device,
+                    "state_topic": self.config.response_text_topic,
+                    "availability_topic": self.config.availability_topic,
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                    "icon": "mdi:message-reply-text",
+                },
+            ),
             (
                 f"homeassistant/sensor/{self.config.device_id}/assistant_state/config",
                 {
@@ -183,6 +239,7 @@ class AssistantRuntimeService:
         muted = self.state_store.is_muted()
         self.client.publish(self.config.state_topic, state, retain=True)
         self.client.publish(self.config.mute_state_topic, "ON" if muted else "OFF", retain=True)
+        self.client.publish(self.config.realtime_status_topic, self._realtime_status, retain=True)
 
     def publish_audio_status(self, status: AudioStatus) -> None:
         self.client.publish(self.config.audio_profile_topic, status.profile, retain=True)
@@ -220,16 +277,25 @@ class AssistantRuntimeService:
         for topic, payload in self.discovery_topics():
             client.publish(topic, json.dumps(payload), retain=True)
         client.subscribe(self.config.mute_command_topic)
+        client.subscribe(self.config.realtime_trigger_topic)
         self.publish_state()
         self.refresh_audio_status(force=True)
 
     def on_message(self, client, userdata, msg) -> None:
+        if msg.topic == self.config.realtime_trigger_topic:
+            payload = msg.payload.decode("utf-8", errors="replace").strip().upper()
+            if payload in {"", "PRESS", "ON", "START", "TRIGGER"}:
+                self._start_realtime_session("manual")
+            return
+
         if msg.topic != self.config.mute_command_topic:
             return
 
         payload = msg.payload.decode("utf-8", errors="replace").strip().upper()
         muted = payload in {"ON", "1", "TRUE"}
         self.state_store.set_muted(muted)
+        if muted:
+            self.realtime_session.stop()
         self.publish_state()
         logging.info("Mute set to %s", muted)
 
@@ -250,6 +316,11 @@ class AssistantRuntimeService:
             self.config.oww_model,
             self.config.oww_threshold,
         )
+        logging.info(
+            "Realtime model=%s voice=%s",
+            self.config.openai_realtime_model,
+            self.config.openai_realtime_voice,
+        )
 
         if not self.config.assistant_enabled:
             logging.warning("ASSISTANT_ENABLED is false; service will stay idle but online.")
@@ -259,6 +330,7 @@ class AssistantRuntimeService:
         try:
             while not self._stop_event.wait(1):
                 status = self.refresh_audio_status()
+                self._drain_realtime_updates()
                 if self.state_store.is_muted():
                     continue
 
@@ -268,13 +340,20 @@ class AssistantRuntimeService:
                         self.publish_state()
                     continue
 
+                if not self.realtime_client.is_available():
+                    if not self.config.openai_api_key:
+                        self._realtime_status = "api-key-missing"
+                    else:
+                        self._realtime_status = "websocket-client-missing"
+                    self.publish_state()
+                    continue
+
+                if self.realtime_session.active():
+                    continue
+
                 event = self.wakeword_detector.poll()
                 if event is not None:
-                    self.state_store.set_state("listening")
-                    self.publish_state()
-                    self._listen_until = time.time() + self.config.oww_listen_window_seconds
-
-                if self._listen_until and time.time() < self._listen_until:
+                    self._start_realtime_session("wakeword")
                     continue
 
                 if self.state_store.current_state() != "idle":
@@ -289,6 +368,8 @@ class AssistantRuntimeService:
         self._stop_event.set()
         logging.info("Assistant runtime service stopping.")
         with suppress(Exception):
+            self.realtime_session.stop()
+        with suppress(Exception):
             self.wakeword_detector.stop()
         with suppress(Exception):
             self.client.publish(self.config.availability_topic, "offline", retain=True)
@@ -296,6 +377,56 @@ class AssistantRuntimeService:
             self.client.loop_stop()
         with suppress(Exception):
             self.client.disconnect()
+
+    def _start_realtime_session(self, reason: str) -> None:
+        if self.state_store.is_muted():
+            logging.info("Ignoring %s trigger while muted.", reason)
+            return
+
+        status = self.refresh_audio_status()
+        if status and (not status.input_ready or not status.output_ready):
+            self.state_store.set_state("error")
+            self._realtime_status = "audio-unavailable"
+            self.publish_state()
+            return
+
+        started = self.realtime_session.start()
+        if not started:
+            logging.info("Realtime session already active; ignoring %s trigger.", reason)
+            return
+
+        self._realtime_status = f"starting:{reason}"
+        self.state_store.set_state("listening")
+        self.publish_state()
+        logging.info("Realtime session started by %s trigger.", reason)
+
+    def _drain_realtime_updates(self) -> None:
+        dirty = False
+        for state in self.realtime_session.drain_states():
+            self._realtime_status = state
+            self.state_store.set_state(state)
+            dirty = True
+
+        for result in self.realtime_session.drain_results():
+            self._handle_realtime_result(result)
+            self._realtime_status = "idle"
+            self.state_store.set_state("idle")
+            dirty = True
+
+        errors = self.realtime_session.drain_errors()
+        if errors:
+            self._realtime_status = f"error:{errors[-1]}"
+            self.state_store.set_state("error")
+            dirty = True
+
+        if dirty:
+            self.publish_state()
+
+    def _handle_realtime_result(self, result: RealtimeConversationResult) -> None:
+        if result.user_transcript:
+            self.client.publish(self.config.transcript_topic, result.user_transcript, retain=True)
+        if result.assistant_transcript:
+            self.client.publish(self.config.response_text_topic, result.assistant_transcript, retain=True)
 
 
 class suppress:

@@ -14,6 +14,10 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class AssistantConfig:
+    openai_api_key: str
+    openai_realtime_model: str
+    openai_realtime_voice: str
+    openai_realtime_instructions: str
     mqtt_host: str
     mqtt_port: int
     mqtt_username: str
@@ -33,6 +37,12 @@ class AssistantConfig:
     oww_input_device: str
     oww_cooldown_seconds: float
     oww_listen_window_seconds: float
+    realtime_capture_seconds: float
+    realtime_input_rate: int
+    realtime_output_rate: int
+    realtime_chunk_ms: int
+    realtime_connect_timeout_seconds: float
+    realtime_response_timeout_seconds: float
 
     @property
     def base_topic(self) -> str:
@@ -78,6 +88,22 @@ class AssistantConfig:
     def audio_output_ready_topic(self) -> str:
         return f"{self.base_topic}/audio/output_ready"
 
+    @property
+    def realtime_trigger_topic(self) -> str:
+        return f"{self.base_topic}/realtime/trigger"
+
+    @property
+    def realtime_status_topic(self) -> str:
+        return f"{self.base_topic}/realtime/status"
+
+    @property
+    def transcript_topic(self) -> str:
+        return f"{self.base_topic}/transcript/last"
+
+    @property
+    def response_text_topic(self) -> str:
+        return f"{self.base_topic}/response/last"
+
 
 def load_config() -> AssistantConfig:
     state_path = Path(os.getenv("ASSISTANT_STATE_PATH", "~/.smart-display-assistant/state.json")).expanduser()
@@ -85,6 +111,14 @@ def load_config() -> AssistantConfig:
     mute_path = state_path.parent / "mute"
 
     return AssistantConfig(
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime").strip() or "gpt-realtime",
+        openai_realtime_voice=os.getenv("OPENAI_REALTIME_VOICE", "marin").strip() or "marin",
+        openai_realtime_instructions=os.getenv(
+            "OPENAI_REALTIME_INSTRUCTIONS",
+            "You are the household smart display assistant. Reply briefly, clearly, and helpfully.",
+        ).strip()
+        or "You are the household smart display assistant. Reply briefly, clearly, and helpfully.",
         mqtt_host=os.getenv("MQTT_HOST", "homeassistant.local"),
         mqtt_port=int(os.getenv("MQTT_PORT", "1883")),
         mqtt_username=os.getenv("MQTT_USERNAME", ""),
@@ -104,4 +138,10 @@ def load_config() -> AssistantConfig:
         oww_input_device=os.getenv("OWW_INPUT_DEVICE", "").strip(),
         oww_cooldown_seconds=float(os.getenv("OWW_COOLDOWN_SECONDS", "8")),
         oww_listen_window_seconds=float(os.getenv("OWW_LISTEN_WINDOW_SECONDS", "8")),
+        realtime_capture_seconds=float(os.getenv("REALTIME_CAPTURE_SECONDS", "6")),
+        realtime_input_rate=int(os.getenv("REALTIME_INPUT_RATE", "24000")),
+        realtime_output_rate=int(os.getenv("REALTIME_OUTPUT_RATE", "24000")),
+        realtime_chunk_ms=int(os.getenv("REALTIME_CHUNK_MS", "100")),
+        realtime_connect_timeout_seconds=float(os.getenv("REALTIME_CONNECT_TIMEOUT_SECONDS", "15")),
+        realtime_response_timeout_seconds=float(os.getenv("REALTIME_RESPONSE_TIMEOUT_SECONDS", "45")),
     )

@@ -192,6 +192,10 @@ _def="${OPENAI_REALTIME_MODEL:-gpt-realtime}"
 read -rp "  Realtime model          [${_def}]: " _in
 OPENAI_REALTIME_MODEL="${_in:-${_def}}"
 
+_def="${OPENAI_REALTIME_VOICE:-marin}"
+read -rp "  Realtime voice          [${_def}]: " _in
+OPENAI_REALTIME_VOICE="${_in:-${_def}}"
+
 _def="${HOME_ASSISTANT_TOKEN:-}"
 if [ -n "$_def" ]; then
     read -rsp "  HA long-lived token (press ENTER to keep saved): " _in
@@ -259,6 +263,7 @@ MQTT_PASSWORD="$MQTT_PASSWORD"
 AUDIO_PROFILE="$AUDIO_PROFILE"
 OPENAI_API_KEY="$OPENAI_API_KEY"
 OPENAI_REALTIME_MODEL="$OPENAI_REALTIME_MODEL"
+OPENAI_REALTIME_VOICE="$OPENAI_REALTIME_VOICE"
 HOME_ASSISTANT_TOKEN="$HOME_ASSISTANT_TOKEN"
 OWW_MODEL="$OWW_MODEL"
 OWW_THRESHOLD="$OWW_THRESHOLD"
@@ -869,6 +874,7 @@ section "Assistant Runtime Environment"
 ASSISTANT_ENV_FILE="/etc/smart-display/assistant.env"
 printf -v OPENAI_API_KEY_Q '%q' "$OPENAI_API_KEY"
 printf -v OPENAI_REALTIME_MODEL_Q '%q' "$OPENAI_REALTIME_MODEL"
+printf -v OPENAI_REALTIME_VOICE_Q '%q' "$OPENAI_REALTIME_VOICE"
 printf -v HA_SERVER_Q '%q' "$HA_SERVER"
 printf -v HOME_ASSISTANT_TOKEN_Q '%q' "$HOME_ASSISTANT_TOKEN"
 printf -v MQTT_HOST_Q '%q' "$MQTT_HOST"
@@ -888,6 +894,7 @@ sudo mkdir -p /etc/smart-display
 sudo tee "$ASSISTANT_ENV_FILE" > /dev/null << ENVEOF
 OPENAI_API_KEY=$OPENAI_API_KEY_Q
 OPENAI_REALTIME_MODEL=$OPENAI_REALTIME_MODEL_Q
+OPENAI_REALTIME_VOICE=$OPENAI_REALTIME_VOICE_Q
 HOME_ASSISTANT_URL=$HA_SERVER_Q
 HOME_ASSISTANT_TOKEN=$HOME_ASSISTANT_TOKEN_Q
 MQTT_HOST=$MQTT_HOST_Q
@@ -904,6 +911,10 @@ GENERIC_SPEAKER_DEVICE=$GENERIC_SPEAKER_DEVICE_Q
 ASSISTANT_STATE_PATH=$ASSISTANT_STATE_PATH_Q
 ASSISTANT_MEMORY_PATH=$ASSISTANT_MEMORY_PATH_Q
 ASSISTANT_ENABLED=true
+REALTIME_CAPTURE_SECONDS=6
+REALTIME_INPUT_RATE=24000
+REALTIME_OUTPUT_RATE=24000
+REALTIME_CHUNK_MS=100
 LOG_LEVEL=INFO
 ENVEOF
 sudo chmod 600 "$ASSISTANT_ENV_FILE"
@@ -916,10 +927,16 @@ info "This file is used by the smart-display-assistant service."
 section "Assistant Runtime Service"
 
 ASSISTANT_APP_DIR="$CURRENT_HOME/assistant"
+ASSISTANT_VENV="/opt/smart-display-assistant"
 info "Installing assistant runtime package..."
 rm -rf "$ASSISTANT_APP_DIR"
 mkdir -p "$ASSISTANT_APP_DIR"
 cp -R "$SCRIPT_DIR/assistant/." "$ASSISTANT_APP_DIR/"
+
+info "Installing assistant runtime dependencies..."
+[ -d "$ASSISTANT_VENV" ] || sudo python3 -m venv "$ASSISTANT_VENV"
+sudo "$ASSISTANT_VENV/bin/pip" install --upgrade pip -q
+sudo "$ASSISTANT_VENV/bin/pip" install --upgrade websocket-client -q
 
 info "Creating smart-display-assistant.service..."
 sudo tee /etc/systemd/system/smart-display-assistant.service > /dev/null << EOF
@@ -934,7 +951,7 @@ User=$CURRENT_USER
 EnvironmentFile=/etc/smart-display/assistant.env
 Environment=PYTHONPATH=$CURRENT_HOME
 WorkingDirectory=$CURRENT_HOME
-ExecStart=/usr/bin/python3 -m assistant.assistant_service
+ExecStart=$ASSISTANT_VENV/bin/python -m assistant.assistant_service
 Restart=always
 RestartSec=5
 

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-VALID_STATES = {"idle", "listening", "responding", "muted", "error"}
+VALID_STATES = {"idle", "listening", "processing", "responding", "muted", "error"}
 
 
 class AssistantStateStore:

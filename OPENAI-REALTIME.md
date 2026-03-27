@@ -26,11 +26,26 @@ What already exists:
 What is not finished yet:
 
 - OpenWakeWord activation flow
-- OpenAI Realtime websocket/session loop
-- streaming microphone input to Realtime
-- streaming model audio output back to speakers
+- final validation of OpenWakeWord activation on Pi hardware
 - interruption / barge-in behavior
-- conversation lifecycle handling
+- polished conversation lifecycle handling
+
+What is now wired in code:
+
+- OpenAI Realtime WebSocket session path
+- microphone capture -> `input_audio_buffer.append`
+- fixed-window audio commit + `response.create`
+- returned model audio playback on the local assistant output
+- MQTT manual trigger topic / HA trigger button
+- MQTT transcript / last-response debug sensors
+- assistant state transitions through `listening`, `processing`, `responding`, and back to `idle`
+
+What still needs real-device validation:
+
+- actual mic device behavior on the Pi audio stack
+- actual speaker playback behavior on the Pi audio stack
+- final wake-word-to-Realtime behavior with the chosen hardware
+- interruption / barge-in tuning
 
 ## Implementation target
 

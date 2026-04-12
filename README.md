@@ -19,9 +19,9 @@ Just like the original author, I only work on this project in my spare time. I'm
 | Component | Details |
 |---|---|
 | SBC | Raspberry Pi 5 (4GB or 8GB of RAM) |
-| Microphone / Audio | TBD |
+| Microphone / Audio | User preference |
 | Display | Raspberry Pi Official 7" DSI Touchscreen OR 7 Inch Touchscreen IPS DSI Display by Hosyond (Amazon) |
-| Speaker | 3W 8 ohm (TBD) |
+| Speaker | 3W 8 ohm (Recommended, USB device works fine too.) |
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
 | Compositor | Not a clue |
 

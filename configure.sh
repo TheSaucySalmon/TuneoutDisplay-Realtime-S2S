@@ -184,7 +184,7 @@ if [ -n "$_def" ]; then
     echo ""
     OPENAI_API_KEY="${_in:-$_def}"
 else
-    read -rsp "  OpenAI API key      [optional for now]: " OPENAI_API_KEY
+    read -rsp "  OpenAI API key      : " OPENAI_API_KEY
     echo ""
 fi
 
@@ -202,7 +202,7 @@ if [ -n "$_def" ]; then
     echo ""
     HOME_ASSISTANT_TOKEN="${_in:-$_def}"
 else
-    read -rsp "  HA long-lived token [optional for now]: " HOME_ASSISTANT_TOKEN
+    read -rsp "  HA long-lived token: " HOME_ASSISTANT_TOKEN
     echo ""
 fi
 
@@ -826,6 +826,8 @@ if [ -f "$MQTT_SCRIPT" ]; then
     printf -v DEVICE_NAME_MQTT_Q '%q' "$DEVICE_NAME"
     printf -v DEVICE_ID_MQTT_Q '%q' "$DEVICE_ID"
     printf -v AUDIO_PROFILE_MQTT_Q '%q' "$AUDIO_PROFILE"
+    printf -v GENERIC_MIC_DEVICE_MQTT_Q '%q' "${GENERIC_MIC_DEVICE:-}"
+    printf -v GENERIC_SPEAKER_DEVICE_MQTT_Q '%q' "${GENERIC_SPEAKER_DEVICE:-}"
     sudo mkdir -p /etc/smart-display
     sudo tee "$MQTT_ENV_FILE" > /dev/null << ENVEOF
 MQTT_HOST=$MQTT_HOST_Q
@@ -835,6 +837,8 @@ MQTT_PASSWORD=$MQTT_PASSWORD_Q
 DEVICE_NAME=$DEVICE_NAME_MQTT_Q
 DEVICE_ID=$DEVICE_ID_MQTT_Q
 AUDIO_PROFILE=$AUDIO_PROFILE_MQTT_Q
+GENERIC_MIC_DEVICE=$GENERIC_MIC_DEVICE_MQTT_Q
+GENERIC_SPEAKER_DEVICE=$GENERIC_SPEAKER_DEVICE_MQTT_Q
 ENVEOF
     sudo chmod 600 "$MQTT_ENV_FILE"
 

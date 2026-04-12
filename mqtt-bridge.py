@@ -8,9 +8,9 @@ plus a Stop TTS button — no rest_command or input_number YAML required.
 
 Entities created in HA:
   number  → Brightness      (controls DSI backlight)
-  number  → Voice Volume    (Seeed audio profile only)
-  number  → Media Volume    (Seeed audio profile only)
-  number  → Mic Sensitivity (Seeed audio profile only)
+  number  → Voice Volume    (Seeed or generic USB)
+  number  → Media Volume    (Seeed or generic USB)
+  number  → Mic Sensitivity (Seeed or generic USB)
 
 Configuration (set via systemd environment / EnvironmentFile):
   MQTT_HOST      Broker hostname or IP   (default: homeassistant.local)
@@ -39,6 +39,8 @@ DEVICE_NAME   = os.getenv("DEVICE_NAME",   "Smart Display")
 DEVICE_ID     = os.getenv("DEVICE_ID",
                     os.uname().nodename.lower().replace("-", "_"))
 AUDIO_PROFILE = os.getenv("AUDIO_PROFILE", "generic_usb")
+GENERIC_MIC_DEVICE = os.getenv("GENERIC_MIC_DEVICE", "")
+GENERIC_SPEAKER_DEVICE = os.getenv("GENERIC_SPEAKER_DEVICE", "")
 
 # ── State file paths ───────────────────────────────────────────────────────────
 HOME           = Path.home()
@@ -114,6 +116,22 @@ if AUDIO_PROFILE == "seeed_2mic_hat":
     ]
     COMMAND_TOPICS = {command_topic(e) for e in
                       ("tts_volume", "media_volume", "brightness", "mic_gain")}
+else:
+    DISCOVERY = [
+        (config_topic("number", "tts_volume"),
+         _number("tts_volume",   "Voice Volume", "mdi:account-voice")),
+
+        (config_topic("number", "media_volume"),
+         _number("media_volume", "Speaker Volume", "mdi:speaker")),
+
+        (config_topic("number", "brightness"),
+         _number("brightness",   "Brightness",   "mdi:brightness-6", min_=0)),
+
+        (config_topic("number", "mic_gain"),
+         _number("mic_gain",     "Mic Sensitivity", "mdi:microphone-settings")),
+    ]
+    COMMAND_TOPICS = {command_topic(e) for e in
+                      ("tts_volume", "media_volume", "brightness", "mic_gain")}
 
 # ── Hardware helpers ───────────────────────────────────────────────────────────
 def _read_state(path: Path, default: int) -> int:
@@ -146,8 +164,79 @@ def _set_alsa(control: str, level: int) -> None:
     if r.returncode != 0:
         print(f"[alsa] Error setting '{control}': {r.stderr.strip()}")
 
+
+def _card_hint(device_name: str) -> str:
+    marker = "CARD="
+    if marker in device_name:
+        tail = device_name.split(marker, 1)[1]
+        return tail.split(",", 1)[0].strip()
+    return device_name.strip()
+
+
+def _run_pactl(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/usr/bin/pactl", *args],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _resolve_pactl_target(kind: str, preferred_device: str) -> str:
+    list_args = ["list", "short", "sinks" if kind == "sink" else "sources"]
+    completed = _run_pactl(*list_args)
+    if completed.returncode != 0:
+        return "@DEFAULT_SINK@" if kind == "sink" else "@DEFAULT_SOURCE@"
+
+    hint = _card_hint(preferred_device).lower()
+    for line in completed.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        name = parts[1].strip()
+        lowered = line.lower()
+        if kind == "source" and ".monitor" in name:
+            continue
+        if hint and hint in lowered:
+            return name
+
+    for line in completed.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        name = parts[1].strip()
+        if kind == "source" and ".monitor" in name:
+            continue
+        return name
+
+    return "@DEFAULT_SINK@" if kind == "sink" else "@DEFAULT_SOURCE@"
+
+
+def _read_pactl_percent(kind: str, preferred_device: str, default: int) -> int:
+    target = _resolve_pactl_target(kind, preferred_device)
+    command = "get-sink-volume" if kind == "sink" else "get-source-volume"
+    completed = _run_pactl(command, target)
+    if completed.returncode == 0:
+        for token in completed.stdout.replace("/", " ").split():
+            if token.endswith("%"):
+                try:
+                    return max(0, min(150, int(token.rstrip("%"))))
+                except ValueError:
+                    pass
+    return default
+
+
+def _set_pactl_percent(kind: str, preferred_device: str, level: int) -> None:
+    target = _resolve_pactl_target(kind, preferred_device)
+    command = "set-sink-volume" if kind == "sink" else "set-source-volume"
+    completed = _run_pactl(command, target, f"{level}%")
+    if completed.returncode != 0:
+        print(f"[pactl] Error setting {kind} volume on {target}: {completed.stderr.strip()}")
+
 def _read_mic_gain_pct() -> int:
     """Read current WM8960 Capture PGA gain and return as 0–100%."""
+    if AUDIO_PROFILE != "seeed_2mic_hat":
+        return _read_pactl_percent("source", GENERIC_MIC_DEVICE, _read_state(MIC_GAIN_FILE, 63))
+
     r = subprocess.run(
         ["/usr/bin/amixer", "-c", "seeed2micvoicec", "cget", "numid=1"],
         capture_output=True, text=True,
@@ -164,6 +253,10 @@ def _read_mic_gain_pct() -> int:
 
 def _set_mic_gain(level_pct: int) -> None:
     """Set WM8960 Capture PGA gain from 0–100% (maps to ALSA 0–63)."""
+    if AUDIO_PROFILE != "seeed_2mic_hat":
+        _set_pactl_percent("source", GENERIC_MIC_DEVICE, level_pct)
+        return
+
     alsa_val = round(level_pct * MIC_GAIN_ALSA_MAX / 100)
     r = subprocess.run(
         ["/usr/bin/amixer", "-c", "seeed2micvoicec", "cset", "numid=1",
@@ -201,6 +294,11 @@ def on_connect(client, userdata, connect_flags, reason_code, properties):
         client.publish(state_topic("tts_volume"),   str(_read_state(TTS_VOL_FILE,   90)), retain=True)
         client.publish(state_topic("media_volume"), str(_read_state(MEDIA_VOL_FILE, 75)), retain=True)
         client.publish(state_topic("mic_gain"),     str(_read_mic_gain_pct()),             retain=True)
+    else:
+        sink_level = _read_pactl_percent("sink", GENERIC_SPEAKER_DEVICE, _read_state(MEDIA_VOL_FILE, 75))
+        client.publish(state_topic("tts_volume"),   str(sink_level), retain=True)
+        client.publish(state_topic("media_volume"), str(sink_level), retain=True)
+        client.publish(state_topic("mic_gain"),     str(_read_mic_gain_pct()), retain=True)
 
     # Subscribe to all command topics
     for topic in COMMAND_TOPICS:
@@ -218,9 +316,15 @@ def on_message(client, userdata, msg):
             level = max(0, min(100, int(float(payload))))
         except ValueError:
             return
-        _set_alsa("TTS Volume", level)
+        if AUDIO_PROFILE == "seeed_2mic_hat":
+            _set_alsa("TTS Volume", level)
+        else:
+            _set_pactl_percent("sink", GENERIC_SPEAKER_DEVICE, level)
         _write_state(TTS_VOL_FILE, level)
         client.publish(state_topic("tts_volume"), str(level), retain=True)
+        if AUDIO_PROFILE != "seeed_2mic_hat":
+            client.publish(state_topic("media_volume"), str(level), retain=True)
+            _write_state(MEDIA_VOL_FILE, level)
         print(f"[tts-volume] → {level}%")
 
     elif topic == command_topic("media_volume"):
@@ -228,9 +332,15 @@ def on_message(client, userdata, msg):
             level = max(0, min(100, int(float(payload))))
         except ValueError:
             return
-        _set_alsa("Media Volume", level)
+        if AUDIO_PROFILE == "seeed_2mic_hat":
+            _set_alsa("Media Volume", level)
+        else:
+            _set_pactl_percent("sink", GENERIC_SPEAKER_DEVICE, level)
         _write_state(MEDIA_VOL_FILE, level)
         client.publish(state_topic("media_volume"), str(level), retain=True)
+        if AUDIO_PROFILE != "seeed_2mic_hat":
+            client.publish(state_topic("tts_volume"), str(level), retain=True)
+            _write_state(TTS_VOL_FILE, level)
         print(f"[media-volume] → {level}%")
 
     elif topic == command_topic("brightness"):

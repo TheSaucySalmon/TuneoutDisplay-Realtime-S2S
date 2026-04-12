@@ -8,6 +8,8 @@ My version keeps the Raspberry Pi smart display / Home Assistant integration con
 
 I don't intend for anyone to see this project anyways, I'm just an idiot that doesn't know how to use GitHub and decided to click some buttons, and now I'm here. Could I have made a private copy of this repo for myself? Probably. Do I know how? Nope. I already did pushes/pulls with this repo, so there's no going back (I'm lazy). If anyone is reading this, I'm sorry lmao.
 
+Also, I'm not an OpenAI glazer, I would totally use Claude for coding, but I'm too lazy. Also, Codex is already in my IDE, so I don't feel like changing it. If Antropic releases a better competitor to Realtime, this project will become pointless.
+
 ## Full Disclosure
 
 Just like the original author, I only work on this project in my spare time. I'm also not the world greatest programmer, so I used Codex to help with the recreation of this project. I'm pretty new to Raspberry Pi's, so I'm still learning everything about them. I also am very new to Linux, since I was raised using Windows. I apologize if anything in here is worded incorrectly.
@@ -25,7 +27,7 @@ Just like the original author, I only work on this project in my spare time. I'm
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
 | Compositor | Not a clue |
 
-I'm not entirely sure if it really matters what version of the Raspberry Pi is used. A Pi 4B was used originally, I just happened to buy a Pi 5 when I started my project. I guess we'll find out. Like I said previously, I'm still pretty new to the Raspberry Pi world, so I'm not familiar with all of it yet.
+I added support for generic usb devices (speaker/mic), so you can use whatever. Audio controls should be exposed to Home Assistant via MQTT, hopefully. At least that's what Codex says.  
 
 ---
 

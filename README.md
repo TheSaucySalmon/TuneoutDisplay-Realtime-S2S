@@ -46,13 +46,35 @@ I added support for generic usb devices (speaker/mic), so you can use whatever. 
 ## Repo Structure
 
 ```text
-configure.sh              # Main setup script - run once on a fresh install (idempotent, re-runnable)
-mqtt-bridge.py            # MQTT auto-discovery bridge for HA device entities
-touch-scroll.py           # Touch-to-scroll daemon (uinput virtual device)
+configure.sh                    # Main setup / install script for the Pi
+mqtt-bridge.py                  # MQTT discovery + HA control entities
+touch-scroll.py                 # Touch swipe -> scroll daemon
+stop-server.py                  # Helper script for stopping the local server
+README.md                       # Main project documentation
+ha-configuration.md             # Home Assistant setup / Lovelace notes
+OPENAI-REALTIME.md              # Realtime implementation notes
+LICENSE.txt                     # License
+
+assistant/
+  assistant_service.py          # Main assistant runtime service
+  audio.py                      # Audio probing / capture / playback helpers
+  config.py                     # Assistant env/config loading
+  realtime.py                   # OpenAI Realtime session client/controller
+  state.py                      # Local assistant state store
+  wakeword.py                   # OpenWakeWord integration
+  __init__.py
+
 lovelace/
-  smart-display-card.js   # Custom Lovelace card (copy to HA /config/www/)
-ha-configuration.md       # Full HA config reference
-OPENAI-REALTIME.md        # OpenAI Realtime speech-to-speech implementation notes
+  smart-display-card.js         # Custom HA card for smart display controls
+  smart-display-dashboard.yaml  # Starter dashboard layout
+
+stl-files/
+  body.stl                      # Main printed enclosure body
+  frame.stl                     # Front frame
+  grill.stl                     # Speaker grill
+  README.md                     # STL / print notes
+
+  **Note:** I'm in the process of modifying the STL files. I've been having trouble with the grill and frame staying together once they're screwed into the body. I'm attempting to make the frame and grill one piece, but I'm having a hard time trying to print that without Bambu Studio adding a million supports. 
 ```
 
 ---

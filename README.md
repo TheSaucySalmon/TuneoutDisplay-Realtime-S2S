@@ -78,7 +78,6 @@ assistant/
 
 lovelace/
   smart-display-card.js         # Custom HA card for smart display controls
-  smart-display-dashboard.yaml  # Starter dashboard layout
 
 stl-files/
   body.stl                      # Main printed enclosure body
@@ -100,7 +99,7 @@ Note: the STL files are still in flux. The frame / grill fitment is being revise
 - Home Assistant running with:
   - **MQTT integration** (Mosquitto) installed and configured
   - **Music Assistant 2.7+** (optional, for Sendspin)
-  - **HACS installed** (optional, but recommended for the included dashboard)
+  - **HACS installed** (optional)
 
 ### 1. Run the configuration script
 
@@ -189,13 +188,11 @@ If you have exposed volume / mic entities, add them too. On `generic_usb`, the m
 
 ### 4. HACS Addons
 
-Included is a drop-in YAML file (`lovelace/smart-display-dashboard.yaml`) that can be used as a starting point. You can make your own, but if you want a quick baseline, copy it into the raw dashboard editor and replace the placeholder entities with your own.
-
 Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
 
 Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the dashboard. If you get stuck in the dasboard because of Kiosk Mode, add "?disable_km" at the end of the URL. EX: `http://yourhomeassistantlink:0000/mycooldashboard?disable_km`
 
-Below is a list of HACS addons required for the included dashboard.
+Below is a list of HACS addons used in my setup.
 
 - **Bubble Card**
 - **layout-card**

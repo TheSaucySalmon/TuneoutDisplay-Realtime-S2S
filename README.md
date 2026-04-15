@@ -27,19 +27,31 @@ Just like the original author, I only work on this project in my spare time. I'm
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
 | Compositor | Not a clue |
 
-I added support for generic usb devices (speaker/mic), so you can use whatever. Audio controls should be exposed to Home Assistant via MQTT, hopefully. At least that's what Codex says.  
+This repo currently supports both `seeed_2mic_hat` / WM8960 setups and `generic_usb` setups using USB microphones and USB speakers/headsets.
+
+Generic USB devices can expose HA MQTT number entities for:
+
+- assistant / voice volume
+- speaker volume
+- mic sensitivity
+- brightness
+
+On `generic_usb`, voice and speaker volume currently point at the same underlying USB output path.
 
 ---
 
 ## Features
 
 - **HA Lovelace kiosk** - Chromium in kiosk mode, launches automatically after boot and waits for HA to be reachable before opening
-- **Voice-runtime ready shell** - Kiosk, audio, MQTT, and touch pieces are set up independently so you can plug in your own assistant runtime
+- **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
+- **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
+- **Manual HA trigger** - Assistant runtime exposes an HA button entity for manual Realtime testing
 - **Music Assistant playback** - Sendspin native player; appears automatically in MA 2.7+
-- **MQTT auto-discovery** - Device registers itself in HA with Voice Volume, Media Volume, Brightness, and Mic Sensitivity entities - no YAML needed
+- **MQTT auto-discovery** - Device registers itself in HA with assistant state, mute, audio status, and control entities
 - **Touch scrolling** - Daemon translates touchscreen swipe gestures into scroll-wheel events for labwc/Wayland
-- **Independent volume channels** - TTS/voice and media are separate ALSA softvol streams, each with its own HA slider
-- **Per-device mic tuning** - Mic sensitivity is adjustable from HA, persists across reboots, useful for different room sizes and placements
+- **Independent volume channels on Seeed audio** - TTS/voice and media are separate ALSA softvol streams on the WM8960 path
+- **Generic USB audio controls** - USB speaker and mic volume controls can be exposed in HA via MQTT
+- **Realtime debug entities** - Realtime status, transcript, and last response can be surfaced in HA for testing
 
 ---
 
@@ -73,11 +85,9 @@ stl-files/
   frame.stl                     # Front frame
   grill.stl                     # Speaker grill
   README.md                     # STL / print notes
-
-  Note: I'm in the process of modifying the STL files. I've been having trouble with the grill and frame staying together once 
-  they're screwed into the body. I'm attempting to make the frame and grill one piece, but I'm having a hard time trying to 
-  print that without Bambu Studio adding a million supports. 
 ```
+
+Note: the STL files are still in flux. The frame / grill fitment is being revised.
 
 ---
 
@@ -90,7 +100,7 @@ stl-files/
 - Home Assistant running with:
   - **MQTT integration** (Mosquitto) installed and configured
   - **Music Assistant 2.7+** (optional, for Sendspin)
-  - **HACS Addon installed** (Required)
+  - **HACS installed** (optional, but recommended for the included dashboard)
 
 ### 1. Run the configuration script
 
@@ -107,8 +117,14 @@ The script prompts you for:
 - Device name (used as the HA device name and Music Assistant player name)
 - Home Assistant URL
 - Lovelace kiosk URL (optional - skip to set up kiosk manually later)
+- Audio profile (`generic_usb` or `seeed_2mic_hat`)
 - MQTT broker host, port, username, and password
-- assistant runtime settings such as OpenAI API key, HA token, activation model, and realtime model
+- OpenAI API key
+- OpenAI Realtime model
+- OpenAI Realtime voice (default: `cedar`)
+- Home Assistant long-lived token
+- OpenWakeWord model and threshold
+- For `generic_usb`: mic and speaker device names
 
 Settings are saved after the first run - re-running the script will pre-fill all prompts with your previous values, so you only need to change what's different.
 MQTT settings are stored in `/etc/smart-display/mqtt.env`, and assistant/runtime settings are stored in `/etc/smart-display/assistant.env`.
@@ -117,11 +133,30 @@ The script installs and configures everything automatically, then offers to rebo
 
 ### 2. Verify MQTT device
 
-In HA go to **Settings -> Devices & Services -> MQTT** and look for your device name. It should appear automatically with these entities:
+In HA go to **Settings -> Devices & Services -> MQTT** and look for your device name. It should appear automatically with core entities like:
+
+- Assistant State (sensor)
+- Mute (switch)
+- Assistant Online (binary sensor)
+- Assistant Audio Input / Output / Profile / Status (sensors)
+- Assistant Trigger (button)
+- Assistant Realtime Status (sensor)
+- Assistant Last Transcript (sensor)
+- Assistant Last Response (sensor)
+- Brightness (number)
+
+Volume / mic entities depend on the audio profile.
+
+For `seeed_2mic_hat`:
 
 - Voice Volume (number)
 - Media Volume (number)
-- Brightness (number)
+- Mic Sensitivity (number)
+
+For `generic_usb`:
+
+- Voice Volume (number)
+- Speaker Volume (number)
 - Mic Sensitivity (number)
 
 If it doesn't appear, check that MQTT discovery is enabled in the MQTT integration settings.
@@ -150,9 +185,11 @@ mute_entity: switch.YOUR_DEVICE_mute
 
 Find your exact entity IDs under **Developer Tools -> States** and search for your device name. The current baseline publishes `sensor.*_assistant_state`, `switch.*_mute`, and `number.*_brightness`. The card also still supports older `assist_satellite.*` style entities if you have them.
 
+If you have exposed volume / mic entities, add them too. On `generic_usb`, the media/speaker volume entity may still use `number.*_media_volume` style IDs in MQTT topics while showing as **Speaker Volume** in HA.
+
 ### 4. HACS Addons
 
-Included is a drop in YAML file (smart-display-dasboard.yaml) that can be used. You can make your own obviously, but for those who want an easy setup, copy and paste the code into the RAW Editor of your dashboard. After that, select the entities that are associated with said cards. Make sure you have HACS installed. 
+Included is a drop-in YAML file (`lovelace/smart-display-dashboard.yaml`) that can be used as a starting point. You can make your own, but if you want a quick baseline, copy it into the raw dashboard editor and replace the placeholder entities with your own.
 
 Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
 
@@ -178,7 +215,7 @@ All services are managed by systemd and start automatically on boot.
 |---|---|
 | `smart-display-assistant` | Assistant runtime baseline with local state, mute, and MQTT presence |
 | `sendspin` | Music Assistant native player |
-| `smart-display-audio-init` | Restores ALSA mixer state after seeed DKMS module loads |
+| `smart-display-audio-init` | Restores ALSA mixer state after seeed DKMS module loads (Seeed only) |
 | `smart-display-mqtt` | MQTT bridge for HA auto-discovery |
 | `smart-display-touch-scroll` | Translates touchscreen swipe gestures into scroll-wheel events |
 
@@ -193,6 +230,8 @@ sudo systemctl status smart-display-assistant sendspin smart-display-audio-init 
 ## Audio Architecture
 
 ```text
+Seeed / WM8960 profile:
+
 Hardware: WM8960 (seeed2micvoicec)
            |
            v
@@ -204,13 +243,20 @@ Hardware: WM8960 (seeed2micvoicec)
        |           |
  assistant   Sendspin
  (voice/TTS) (music)
+
+Generic USB profile:
+
+USB microphone  -> assistant capture / OpenWakeWord / Realtime
+USB speaker     -> assistant playback / generic USB HA volume controls
 ```
 
-Volume controls:
+Seeed volume controls:
 - **TTS Volume** - `amixer -c seeed2micvoicec cset "name=TTS Volume" 80%`
 - **Media Volume** - `amixer -c seeed2micvoicec cset "name=Media Volume" 80%`
 
-> **Note:** `pipewire-alsa` must not be installed - it intercepts ALSA calls at the library level and prevents dmix from working. The setup script explicitly removes it. PipeWire remains available for microphone input when you add your own assistant runtime.
+Generic USB volume controls are handled via `pactl` in the MQTT bridge.
+
+> **Note:** `pipewire-alsa` must not be installed on the Seeed / WM8960 path - it intercepts ALSA calls at the library level and prevents dmix from working. The setup script explicitly removes it. PipeWire remains available for microphone input.
 
 ---
 
@@ -218,7 +264,10 @@ Volume controls:
 
 ### Mic sensitivity
 
-Adjust the **Mic Sensitivity** slider in HA (the MQTT entity). Higher values boost the microphone preamplifier for better far-field pickup. The value persists across reboots. Default is 63% (0 dB on the WM8960 Capture PGA).
+Adjust the **Mic Sensitivity** slider in HA (the MQTT entity).
+
+- On `seeed_2mic_hat`, this controls the WM8960 capture gain and persists across reboots.
+- On `generic_usb`, this maps to the active USB source volume through `pactl`.
 
 ### Touch scroll speed
 
@@ -237,7 +286,9 @@ Re-run `./configure.sh` and enter a new kiosk URL at the prompt, or edit `~/.con
 ## Troubleshooting
 
 **Audio settings don't persist after reboot**
-The seeed DKMS module loads after `alsa-restore` runs. The `smart-display-audio-init` service handles this - check its status and logs. Speaker volume is also re-applied in `~/.config/labwc/autostart` as a safety net.
+On `seeed_2mic_hat`, the seeed DKMS module loads after `alsa-restore` runs. The `smart-display-audio-init` service handles this - check its status and logs. Speaker volume is also re-applied in `~/.config/labwc/autostart` as a safety net.
+
+On `generic_usb`, confirm the selected USB devices still exist and that PipeWire is running.
 
 **"No MCLK configured" in dmesg / aplay fails**
 The seeed-voicecard DKMS module was built for a different kernel than the one currently running (common after `apt full-upgrade`). Fix:
@@ -252,8 +303,24 @@ sudo reboot
 - Verify MQTT discovery is enabled in HA's MQTT integration settings
 - Check `journalctl -u smart-display-mqtt -f` for connection errors
 
-**Assistant runtime is online but not conversational yet**
-The baseline assistant service handles local state, mute, and MQTT presence. OpenWakeWord and OpenAI Realtime session handling are still the next implementation steps.
+**Assistant state shows unavailable / card says Unknown**
+- Check `sudo systemctl status smart-display-assistant --no-pager`
+- Check `sudo journalctl -u smart-display-assistant -n 80 --no-pager`
+- If the runtime is down, the Lovelace card will show `Unknown`
+
+**Assistant runtime starts but Realtime does not respond**
+- Check `/etc/smart-display/assistant.env` for `OPENAI_API_KEY` and Realtime settings
+- Check `sudo journalctl -u smart-display-assistant -f`
+- Test with the HA `Assistant Trigger` button before debugging wake word behavior
+
+**`git pull` on the Pi says local files would be overwritten**
+- Check `git status`
+- If the repo has local drift, stash it before pulling:
+```bash
+git stash
+git pull
+```
+- Then rerun `./configure.sh`
 
 **Touch scrolling not working**
 Check the daemon is running: `systemctl status smart-display-touch-scroll`

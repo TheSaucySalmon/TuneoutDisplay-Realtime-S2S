@@ -285,7 +285,7 @@ Re-run `./configure.sh` and enter a new kiosk URL at the prompt, or edit `~/.con
 **Audio settings don't persist after reboot**
 On `seeed_2mic_hat`, the seeed DKMS module loads after `alsa-restore` runs. The `smart-display-audio-init` service handles this - check its status and logs. Speaker volume is also re-applied in `~/.config/labwc/autostart` as a safety net.
 
-On `generic_usb`, confirm the selected USB devices still exist and that PipeWire is running.
+On `generic_usb`, confirm the selected USB devices still exist and that PipeWire is running if audio stops working after a reboot or after swapping hardware.
 
 **"No MCLK configured" in dmesg / aplay fails**
 The seeed-voicecard DKMS module was built for a different kernel than the one currently running (common after `apt full-upgrade`). Fix:

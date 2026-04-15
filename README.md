@@ -74,7 +74,9 @@ stl-files/
   grill.stl                     # Speaker grill
   README.md                     # STL / print notes
 
-  Note: I'm in the process of modifying the STL files. I've been having trouble with the grill and frame staying together once they're screwed into the body. I'm attempting to make the frame and grill one piece, but I'm having a hard time trying to print that without Bambu Studio adding a million supports. 
+  Note: I'm in the process of modifying the STL files. I've been having trouble with the grill and frame staying together once 
+  they're screwed into the body. I'm attempting to make the frame and grill one piece, but I'm having a hard time trying to 
+  print that without Bambu Studio adding a million supports. 
 ```
 
 ---

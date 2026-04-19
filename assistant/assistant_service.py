@@ -325,7 +325,7 @@ class AssistantRuntimeService:
         if not self.config.assistant_enabled:
             logging.warning("ASSISTANT_ENABLED is false; service will stay idle but online.")
         else:
-            self.wakeword_detector.start()
+            self._start_wakeword_detector()
 
         try:
             while not self._stop_event.wait(1):
@@ -370,7 +370,7 @@ class AssistantRuntimeService:
         with suppress(Exception):
             self.realtime_session.stop()
         with suppress(Exception):
-            self.wakeword_detector.stop()
+            self._stop_wakeword_detector()
         with suppress(Exception):
             self.client.publish(self.config.availability_topic, "offline", retain=True)
         with suppress(Exception):
@@ -381,6 +381,15 @@ class AssistantRuntimeService:
     def _start_realtime_session(self, reason: str) -> None:
         if self.state_store.is_muted():
             logging.info("Ignoring %s trigger while muted.", reason)
+            return
+
+        if not self.realtime_client.is_available():
+            if not self.config.openai_api_key:
+                self._realtime_status = "api-key-missing"
+            else:
+                self._realtime_status = "websocket-client-missing"
+            self.publish_state()
+            logging.warning("Ignoring %s trigger because Realtime is unavailable: %s", reason, self._realtime_status)
             return
 
         status = self.refresh_audio_status()
@@ -395,6 +404,7 @@ class AssistantRuntimeService:
             logging.info("Realtime session already active; ignoring %s trigger.", reason)
             return
 
+        self._stop_wakeword_detector()
         self._realtime_status = f"starting:{reason}"
         self.state_store.set_state("listening")
         self.publish_state()
@@ -411,12 +421,14 @@ class AssistantRuntimeService:
             self._handle_realtime_result(result)
             self._realtime_status = "idle"
             self.state_store.set_state("idle")
+            self._start_wakeword_detector()
             dirty = True
 
         errors = self.realtime_session.drain_errors()
         if errors:
             self._realtime_status = f"error:{errors[-1]}"
             self.state_store.set_state("error")
+            self._start_wakeword_detector()
             dirty = True
 
         if dirty:
@@ -427,6 +439,16 @@ class AssistantRuntimeService:
             self.client.publish(self.config.transcript_topic, result.user_transcript, retain=True)
         if result.assistant_transcript:
             self.client.publish(self.config.response_text_topic, result.assistant_transcript, retain=True)
+
+    def _start_wakeword_detector(self) -> None:
+        if not self.config.assistant_enabled or self.state_store.is_muted() or self.realtime_session.active():
+            return
+        self.wakeword_detector.start()
+        logging.info("OWW status: %s", self.wakeword_detector.status)
+
+    def _stop_wakeword_detector(self) -> None:
+        self.wakeword_detector.stop()
+        logging.info("OWW detector stopped.")
 
 
 class suppress:

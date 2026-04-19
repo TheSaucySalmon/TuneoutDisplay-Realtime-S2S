@@ -941,7 +941,7 @@ cp -R "$SCRIPT_DIR/assistant/." "$ASSISTANT_APP_DIR/"
 info "Installing assistant runtime dependencies..."
 [ -d "$ASSISTANT_VENV" ] || sudo python3 -m venv "$ASSISTANT_VENV"
 sudo "$ASSISTANT_VENV/bin/pip" install --upgrade pip -q
-sudo "$ASSISTANT_VENV/bin/pip" install --upgrade paho-mqtt websocket-client -q
+sudo "$ASSISTANT_VENV/bin/pip" install --upgrade paho-mqtt websocket-client numpy openwakeword -q
 
 info "Creating smart-display-assistant.service..."
 sudo tee /etc/systemd/system/smart-display-assistant.service > /dev/null << EOF

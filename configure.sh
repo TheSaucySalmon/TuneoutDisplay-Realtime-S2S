@@ -298,6 +298,7 @@ section "Installing Dependencies"
 info "Installing dependencies..."
 sudo apt install -y \
     git sox alsa-utils unclutter-xfixes python3-paho-mqtt python3-evdev \
+    mosquitto-clients \
     avahi-daemon avahi-utils \
     pipewire pipewire-bin pipewire-pulse wireplumber \
     libmpv-dev mpv libasound2-plugins pulseaudio-utils \

@@ -176,6 +176,7 @@ class OpenAIRealtimeClient:
                     "output": {
                         "format": {
                             "type": "audio/pcm",
+                            "rate": self.config.realtime_output_rate,
                         },
                         "voice": self.config.openai_realtime_voice,
                     },

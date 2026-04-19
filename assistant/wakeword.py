@@ -63,7 +63,7 @@ class OpenWakeWordDetector:
             return
 
         try:
-            self._model = OpenWakeWordModel(wakeword_models=[self.config.oww_model])
+            self._model = self._load_model()
         except Exception as exc:
             self._status = f"model-load-failed:{exc}"
             logging.warning("OWW disabled: failed to load model %s: %s", self.config.oww_model, exc)
@@ -162,6 +162,15 @@ class OpenWakeWordDetector:
         with self._event_lock:
             self._pending_event = event
         logging.info("Wake word detected: model=%s score=%.3f", event.model, event.score)
+
+    def _load_model(self):
+        try:
+            return OpenWakeWordModel(wakeword_models=[self.config.oww_model])
+        except TypeError as exc:
+            if "wakeword_models" not in str(exc):
+                raise
+            logging.info("OWW Model rejected wakeword_models; retrying with wakeword_model_paths.")
+            return OpenWakeWordModel(wakeword_model_paths=[self.config.oww_model])
 
     def _auto_input_device(self) -> str:
         status = self.audio_manager.probe()

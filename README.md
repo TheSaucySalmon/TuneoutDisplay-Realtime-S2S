@@ -188,18 +188,11 @@ If you have exposed volume / mic entities, add them too. On `generic_usb`, the m
 
 ### 4. HACS Addons
 
+Included is a drop-in YAML file (`lovelace/smart-display-dashboard.yaml`) that can be used as a starting point. You can make your own, but if you want a quick baseline, copy it into the raw dashboard editor and replace the placeholder entities with your own.
+
 Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
 
 Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the dashboard. If you get stuck in the dasboard because of Kiosk Mode, add "?disable_km" at the end of the URL. EX: `http://yourhomeassistantlink:0000/mycooldashboard?disable_km`
-
-Below is a list of HACS addons used in my setup.
-
-- **Bubble Card**
-- **layout-card**
-- **Mini-media player**
-- **Mushroom** (MOST IMPORTANT REQUIREMENT)
-- **Ultimate Card**
-
 
 
 ---
@@ -285,7 +278,7 @@ Re-run `./configure.sh` and enter a new kiosk URL at the prompt, or edit `~/.con
 **Audio settings don't persist after reboot**
 On `seeed_2mic_hat`, the seeed DKMS module loads after `alsa-restore` runs. The `smart-display-audio-init` service handles this - check its status and logs. Speaker volume is also re-applied in `~/.config/labwc/autostart` as a safety net.
 
-On `generic_usb`, confirm the selected USB devices still exist and that PipeWire is running if audio stops working after a reboot or after swapping hardware.
+On `generic_usb`, confirm the selected USB devices still exist and that PipeWire is running.
 
 **"No MCLK configured" in dmesg / aplay fails**
 The seeed-voicecard DKMS module was built for a different kernel than the one currently running (common after `apt full-upgrade`). Fix:

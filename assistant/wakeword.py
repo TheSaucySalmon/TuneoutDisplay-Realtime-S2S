@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from assistant.audio import GenericAudioManager
 from assistant.config import AssistantConfig
@@ -129,7 +130,7 @@ class OpenWakeWordDetector:
                         break
                     pcm = np.frombuffer(chunk, dtype=np.int16)
                     scores = self._model.predict(pcm)
-                    score = float(scores.get(self.config.oww_model, 0.0))
+                    score = self._score_for_configured_model(scores)
                     self._maybe_emit(score)
             except Exception as exc:
                 self._status = f"error:{exc}"
@@ -164,13 +165,47 @@ class OpenWakeWordDetector:
         logging.info("Wake word detected: model=%s score=%.3f", event.model, event.score)
 
     def _load_model(self):
+        model_ref = self._resolve_model_reference()
+        model_path = Path(model_ref).expanduser()
+        if model_path.exists():
+            return OpenWakeWordModel(wakeword_model_paths=[str(model_path)])
+
         try:
-            return OpenWakeWordModel(wakeword_models=[self.config.oww_model])
+            return OpenWakeWordModel(wakeword_models=[model_ref])
         except TypeError as exc:
             if "wakeword_models" not in str(exc):
                 raise
             logging.info("OWW Model rejected wakeword_models; retrying with wakeword_model_paths.")
-            return OpenWakeWordModel(wakeword_model_paths=[self.config.oww_model])
+            return OpenWakeWordModel(wakeword_model_paths=[model_ref])
+
+    def _resolve_model_reference(self) -> str:
+        model = self.config.oww_model
+        if "/" in model or "\\" in model:
+            return model
+
+        try:
+            import openwakeword
+        except Exception:
+            return model
+
+        bundled_models = getattr(openwakeword, "models", {})
+        model_info = bundled_models.get(model)
+        if isinstance(model_info, dict) and model_info.get("model_path"):
+            return str(model_info["model_path"])
+        return model
+
+    def _score_for_configured_model(self, scores: dict) -> float:
+        keys = [
+            self.config.oww_model,
+            Path(self.config.oww_model).name,
+            Path(self.config.oww_model).stem,
+        ]
+        for key in keys:
+            if key in scores:
+                return float(scores[key])
+        if scores:
+            return float(max(scores.values()))
+        return 0.0
 
     def _auto_input_device(self) -> str:
         status = self.audio_manager.probe()

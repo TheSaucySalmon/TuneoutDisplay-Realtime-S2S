@@ -16,6 +16,7 @@ import paho.mqtt.client as mqtt
 
 from assistant.audio import AudioStatus, GenericAudioManager
 from assistant.config import AssistantConfig, load_config
+from assistant.memory import MemoryStore
 from assistant.realtime import OpenAIRealtimeClient, RealtimeConversationResult, RealtimeSessionController
 from assistant.state import AssistantStateStore
 from assistant.wakeword import OpenWakeWordDetector
@@ -25,9 +26,15 @@ class AssistantRuntimeService:
     def __init__(self, config: AssistantConfig) -> None:
         self.config = config
         self.state_store = AssistantStateStore(config.state_path, config.mute_path)
+        self.memory_store = MemoryStore(config.memory_path, config.device_id)
         self.audio_manager = GenericAudioManager(config)
         self.wakeword_detector = OpenWakeWordDetector(config, self.audio_manager)
-        self.realtime_client = OpenAIRealtimeClient(config, self.audio_manager)
+        self.realtime_client = OpenAIRealtimeClient(
+            config,
+            self.audio_manager,
+            memory_store=self.memory_store,
+            on_memory_changed=self.publish_memory_snapshot,
+        )
         self.realtime_session = RealtimeSessionController(self.realtime_client)
         self._audio_status: AudioStatus | None = None
         self._last_audio_probe = 0.0
@@ -253,6 +260,13 @@ class AssistantRuntimeService:
         self.client.publish(self.config.audio_input_ready_topic, "ON" if status.input_ready else "OFF", retain=True)
         self.client.publish(self.config.audio_output_ready_topic, "ON" if status.output_ready else "OFF", retain=True)
 
+    def publish_memory_snapshot(self) -> None:
+        self.client.publish(
+            self.config.memory_sync_topic,
+            json.dumps(self.memory_store.snapshot()),
+            retain=True,
+        )
+
     def refresh_audio_status(self, force: bool = False) -> AudioStatus | None:
         now = time.time()
         if not force and (now - self._last_audio_probe) < 30 and self._audio_status is not None:
@@ -282,10 +296,15 @@ class AssistantRuntimeService:
             client.publish(topic, json.dumps(payload), retain=True)
         client.subscribe(self.config.mute_command_topic)
         client.subscribe(self.config.realtime_trigger_topic)
+        client.subscribe(self.config.memory_sync_topic)
         self.publish_state()
         self.refresh_audio_status(force=True)
 
     def on_message(self, client, userdata, msg) -> None:
+        if msg.topic == self.config.memory_sync_topic:
+            self._handle_memory_sync(msg.payload)
+            return
+
         if msg.topic == self.config.realtime_trigger_topic:
             payload = msg.payload.decode("utf-8", errors="replace").strip().upper()
             if payload in {"", "PRESS", "ON", "START", "TRIGGER"}:
@@ -302,6 +321,20 @@ class AssistantRuntimeService:
             self.realtime_session.stop()
         self.publish_state()
         logging.info("Mute set to %s", muted)
+
+    def _handle_memory_sync(self, payload: bytes) -> None:
+        try:
+            snapshot = json.loads(payload.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            logging.warning("Ignoring invalid memory sync payload: %s", exc)
+            return
+
+        if not isinstance(snapshot, dict):
+            return
+        if snapshot.get("source_device") == self.config.device_id:
+            return
+        if self.memory_store.merge_snapshot(snapshot):
+            logging.info("Merged shared assistant memory from %s.", snapshot.get("source_device", "unknown"))
 
     def on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
         if reason_code.is_failure:

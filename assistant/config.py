@@ -28,6 +28,7 @@ class AssistantConfig:
     device_id: str
     state_path: Path
     memory_path: Path
+    memory_sync_topic: str
     mute_path: Path
     log_level: str
     assistant_enabled: bool
@@ -133,6 +134,8 @@ def load_config() -> AssistantConfig:
         device_id=os.getenv("DEVICE_ID", os.uname().nodename.lower().replace("-", "_")),
         state_path=state_path,
         memory_path=memory_path,
+        memory_sync_topic=os.getenv("MEMORY_SYNC_TOPIC", "smart-display/assistant/memory/shared").strip()
+        or "smart-display/assistant/memory/shared",
         mute_path=mute_path,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         assistant_enabled=_env_bool("ASSISTANT_ENABLED", True),

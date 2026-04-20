@@ -7,10 +7,12 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 from assistant.audio import GenericAudioManager
 from assistant.config import AssistantConfig
 from assistant.home_assistant import HomeAssistantClient
+from assistant.memory import MemoryStore
 
 try:
     import websocket
@@ -26,10 +28,18 @@ class RealtimeConversationResult:
 
 
 class OpenAIRealtimeClient:
-    def __init__(self, config: AssistantConfig, audio_manager: GenericAudioManager) -> None:
+    def __init__(
+        self,
+        config: AssistantConfig,
+        audio_manager: GenericAudioManager,
+        memory_store: MemoryStore | None = None,
+        on_memory_changed: Callable[[], None] | None = None,
+    ) -> None:
         self.config = config
         self.audio_manager = audio_manager
         self.home_assistant = HomeAssistantClient(config)
+        self.memory_store = memory_store
+        self.on_memory_changed = on_memory_changed
 
     def is_available(self) -> bool:
         return bool(self.config.openai_api_key and websocket is not None)
@@ -200,55 +210,114 @@ class OpenAIRealtimeClient:
 
     def _instructions(self) -> str:
         instructions = self.config.openai_realtime_instructions
-        if not self.home_assistant.is_available():
+        extra: list[str] = []
+        if self.home_assistant.is_available():
+            extra.append(
+                "You can control Home Assistant by calling the home_assistant_call_service tool. "
+                "When the user asks to control a device, scene, script, automation, or helper, "
+                "call the appropriate Home Assistant service. Keep spoken confirmations brief."
+            )
+        if self.memory_store is not None:
+            extra.append(
+                "You can remember stable user preferences or household facts with memory tools. "
+                "Only remember durable facts, not one-off commands."
+            )
+        if not extra:
             return instructions
         return (
             f"{instructions}\n\n"
-            "You can control Home Assistant by calling the home_assistant_call_service tool. "
-            "When the user asks to control a device, scene, script, automation, or helper, "
-            "call the appropriate Home Assistant service. Keep spoken confirmations brief."
+            + "\n".join(extra)
         )
 
     def _tools(self) -> list[dict[str, object]]:
+        tools: list[dict[str, object]] = []
         if not self.home_assistant.is_available():
-            return []
+            pass
+        else:
+            tools.append(
+                {
+                    "type": "function",
+                    "name": "home_assistant_call_service",
+                    "description": (
+                        "Call a Home Assistant service to control devices, scenes, scripts, "
+                        "automations, or helpers. Use this for lights, switches, input_booleans, "
+                        "input_numbers, input_selects, covers, media players, climate, scenes, and scripts."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "domain": {
+                                "type": "string",
+                                "description": "Home Assistant service domain, for example light, switch, scene, input_boolean, input_number, input_select.",
+                            },
+                            "service": {
+                                "type": "string",
+                                "description": "Service name, for example turn_on, turn_off, toggle, set_value, select_option, activate.",
+                            },
+                            "entity_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Target entity IDs, for example light.jakes_room_1 or input_boolean.movie_mode.",
+                            },
+                            "data": {
+                                "type": "object",
+                                "description": "Extra service data, such as brightness_pct, rgb_color, value, option, temperature, or transition.",
+                                "additionalProperties": True,
+                            },
+                        },
+                        "required": ["domain", "service"],
+                        "additionalProperties": False,
+                    },
+                }
+            )
 
-        return [
-            {
-                "type": "function",
-                "name": "home_assistant_call_service",
-                "description": (
-                    "Call a Home Assistant service to control devices, scenes, scripts, "
-                    "automations, or helpers. Use this for lights, switches, input_booleans, "
-                    "input_numbers, input_selects, covers, media players, climate, scenes, and scripts."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "domain": {
-                            "type": "string",
-                            "description": "Home Assistant service domain, for example light, switch, scene, input_boolean, input_number, input_select.",
-                        },
-                        "service": {
-                            "type": "string",
-                            "description": "Service name, for example turn_on, turn_off, toggle, set_value, select_option, activate.",
-                        },
-                        "entity_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Target entity IDs, for example light.jakes_room_1 or input_boolean.movie_mode.",
-                        },
-                        "data": {
+        if self.memory_store is not None:
+            tools.extend(
+                [
+                    {
+                        "type": "function",
+                        "name": "remember_memory",
+                        "description": "Store a durable user preference or household fact in shared local assistant memory.",
+                        "parameters": {
                             "type": "object",
-                            "description": "Extra service data, such as brightness_pct, rgb_color, value, option, temperature, or transition.",
-                            "additionalProperties": True,
+                            "properties": {
+                                "text": {
+                                    "type": "string",
+                                    "description": "The fact or preference to remember.",
+                                },
+                                "category": {
+                                    "type": "string",
+                                    "description": "Short category like user, home, preference, device, routine, or general.",
+                                },
+                            },
+                            "required": ["text"],
+                            "additionalProperties": False,
                         },
                     },
-                    "required": ["domain", "service"],
-                    "additionalProperties": False,
-                },
-            }
-        ]
+                    {
+                        "type": "function",
+                        "name": "recall_memory",
+                        "description": "Search shared local assistant memory for relevant facts or preferences.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "What to search memory for.",
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Maximum number of memories to return.",
+                                },
+                            },
+                            "required": ["query"],
+                            "additionalProperties": False,
+                        },
+                    },
+                ]
+            )
+
+        return tools
 
     def _handle_function_calls(self, ws, event: dict[str, object]) -> bool:
         response = event.get("response", {})
@@ -287,6 +356,12 @@ class OpenAIRealtimeClient:
         except json.JSONDecodeError as exc:
             return {"ok": False, "message": f"Invalid tool arguments: {exc}"}
 
+        if name == "remember_memory":
+            return self._remember_memory(args)
+
+        if name == "recall_memory":
+            return self._recall_memory(args)
+
         if name != "home_assistant_call_service":
             return {"ok": False, "message": f"Unknown function: {name}"}
 
@@ -307,6 +382,38 @@ class OpenAIRealtimeClient:
             data=data,
         )
         return {"ok": result.ok, "message": result.message, "data": result.data}
+
+    def _remember_memory(self, args: dict[str, object]) -> dict[str, object]:
+        if self.memory_store is None:
+            return {"ok": False, "message": "Memory is not configured."}
+
+        try:
+            entry = self.memory_store.add(
+                text=str(args.get("text", "")),
+                category=str(args.get("category", "general")),
+            )
+        except ValueError as exc:
+            return {"ok": False, "message": str(exc)}
+
+        if self.on_memory_changed is not None:
+            self.on_memory_changed()
+        return {"ok": True, "message": "Memory saved.", "memory": entry.__dict__}
+
+    def _recall_memory(self, args: dict[str, object]) -> dict[str, object]:
+        if self.memory_store is None:
+            return {"ok": False, "message": "Memory is not configured."}
+
+        limit = args.get("limit", 5)
+        try:
+            parsed_limit = max(1, min(int(limit), 10))
+        except (TypeError, ValueError):
+            parsed_limit = 5
+
+        entries = self.memory_store.search(str(args.get("query", "")), limit=parsed_limit)
+        return {
+            "ok": True,
+            "memories": [entry.__dict__ for entry in entries],
+        }
 
 
 class RealtimeSessionController:

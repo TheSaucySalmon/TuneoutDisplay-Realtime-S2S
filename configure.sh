@@ -60,7 +60,7 @@ fi
 # Check that the companion Python scripts are present alongside configure.sh.
 # SCRIPT_DIR is resolved at the top of the script before any cd commands.
 _MISSING_FILES=()
-for _f in mqtt-bridge.py touch-scroll.py assistant/assistant_service.py assistant/config.py assistant/state.py assistant/audio.py assistant/home_assistant.py assistant/__init__.py; do
+for _f in mqtt-bridge.py touch-scroll.py assistant/assistant_service.py assistant/config.py assistant/state.py assistant/audio.py assistant/home_assistant.py assistant/memory.py assistant/__init__.py; do
     if [ ! -f "$SCRIPT_DIR/$_f" ]; then
         _MISSING_FILES+=("$_f")
     fi
@@ -959,6 +959,7 @@ GENERIC_MIC_DEVICE=$GENERIC_MIC_DEVICE_Q
 GENERIC_SPEAKER_DEVICE=$GENERIC_SPEAKER_DEVICE_Q
 ASSISTANT_STATE_PATH=$ASSISTANT_STATE_PATH_Q
 ASSISTANT_MEMORY_PATH=$ASSISTANT_MEMORY_PATH_Q
+MEMORY_SYNC_TOPIC=smart-display/assistant/memory/shared
 ASSISTANT_ENABLED=true
 REALTIME_CAPTURE_SECONDS=6
 REALTIME_INPUT_RATE=24000

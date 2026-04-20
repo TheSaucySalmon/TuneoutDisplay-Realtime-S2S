@@ -46,6 +46,7 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 - **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
 - **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
 - **Home Assistant voice control path** - Realtime can call HA services for entities, scenes, scripts, and helpers
+- **Shared local memory** - Each Pi stores memory locally and syncs a retained snapshot over MQTT, no database required
 - **Manual HA trigger** - Assistant runtime exposes an HA button entity for manual Realtime testing
 - **Music Assistant playback** - Sendspin native player; appears automatically in MA 2.7+
 - **MQTT auto-discovery** - Device registers itself in HA with assistant state, mute, audio status, and control entities
@@ -73,6 +74,7 @@ assistant/
   audio.py                      # Audio probing / capture / playback helpers
   config.py                     # Assistant env/config loading
   home_assistant.py             # HA REST service-call helper for Realtime tools
+  memory.py                     # Local JSON memory store + MQTT sync payload support
   realtime.py                   # OpenAI Realtime session client/controller
   state.py                      # Local assistant state store
   wakeword.py                   # OpenWakeWord integration
@@ -319,6 +321,27 @@ Examples the assistant should be able to handle:
 - "Set the helper to bedtime" if the entity and service are clear from the name/context
 
 The tool calls HA services directly, so helpers work through their normal domains, such as `input_boolean.turn_on`, `input_number.set_value`, and `input_select.select_option`.
+
+### Shared assistant memory
+
+Memory is stored locally on each Pi as JSON:
+
+```bash
+~/.smart-display-assistant/memory/shared_memory.json
+```
+
+The same memory snapshot is also published as a retained MQTT message:
+
+```text
+smart-display/assistant/memory/shared
+```
+
+That lets multiple Pi displays sync basic shared facts without setting up a database. Realtime gets two tools:
+
+- `remember_memory` for durable facts/preferences
+- `recall_memory` for searching saved memory
+
+This is intentionally simple. It is good for preferences like "Jake likes warm lights at night" or "the office lamp is called desk lamp," not large conversation history.
 
 ---
 

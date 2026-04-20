@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from assistant.audio import GenericAudioManager
 from assistant.config import AssistantConfig
+from assistant.home_assistant import HomeAssistantClient
 
 try:
     import websocket
@@ -28,6 +29,7 @@ class OpenAIRealtimeClient:
     def __init__(self, config: AssistantConfig, audio_manager: GenericAudioManager) -> None:
         self.config = config
         self.audio_manager = audio_manager
+        self.home_assistant = HomeAssistantClient(config)
 
     def is_available(self) -> bool:
         return bool(self.config.openai_api_key and websocket is not None)
@@ -130,6 +132,9 @@ class OpenAIRealtimeClient:
                     continue
 
                 if event_type == "response.done":
+                    if self._handle_function_calls(ws, event):
+                        deadline = time.time() + self.config.realtime_response_timeout_seconds
+                        continue
                     break
 
                 if event_type == "error":
@@ -158,34 +163,150 @@ class OpenAIRealtimeClient:
         return websocket.create_connection(url, header=headers, timeout=self.config.realtime_connect_timeout_seconds)
 
     def _session_update_event(self) -> dict[str, object]:
-        return {
-            "type": "session.update",
-            "session": {
-                "type": "realtime",
-                "model": self.config.openai_realtime_model,
-                "instructions": self.config.openai_realtime_instructions,
-                "output_modalities": ["audio"],
-                "audio": {
-                    "input": {
-                        "format": {
-                            "type": "audio/pcm",
-                            "rate": self.config.realtime_input_rate,
-                        },
-                        "turn_detection": None,
+        session: dict[str, object] = {
+            "type": "realtime",
+            "model": self.config.openai_realtime_model,
+            "instructions": self._instructions(),
+            "output_modalities": ["audio"],
+            "audio": {
+                "input": {
+                    "format": {
+                        "type": "audio/pcm",
+                        "rate": self.config.realtime_input_rate,
                     },
-                    "output": {
-                        "format": {
-                            "type": "audio/pcm",
-                            "rate": self.config.realtime_output_rate,
-                        },
-                        "voice": self.config.openai_realtime_voice,
+                    "turn_detection": None,
+                },
+                "output": {
+                    "format": {
+                        "type": "audio/pcm",
+                        "rate": self.config.realtime_output_rate,
                     },
+                    "voice": self.config.openai_realtime_voice,
                 },
             },
+        }
+        tools = self._tools()
+        if tools:
+            session["tools"] = tools
+            session["tool_choice"] = "auto"
+
+        return {
+            "type": "session.update",
+            "session": session,
         }
 
     def _send_event(self, ws, event: dict[str, object]) -> None:
         ws.send(json.dumps(event))
+
+    def _instructions(self) -> str:
+        instructions = self.config.openai_realtime_instructions
+        if not self.home_assistant.is_available():
+            return instructions
+        return (
+            f"{instructions}\n\n"
+            "You can control Home Assistant by calling the home_assistant_call_service tool. "
+            "When the user asks to control a device, scene, script, automation, or helper, "
+            "call the appropriate Home Assistant service. Keep spoken confirmations brief."
+        )
+
+    def _tools(self) -> list[dict[str, object]]:
+        if not self.home_assistant.is_available():
+            return []
+
+        return [
+            {
+                "type": "function",
+                "name": "home_assistant_call_service",
+                "description": (
+                    "Call a Home Assistant service to control devices, scenes, scripts, "
+                    "automations, or helpers. Use this for lights, switches, input_booleans, "
+                    "input_numbers, input_selects, covers, media players, climate, scenes, and scripts."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {
+                            "type": "string",
+                            "description": "Home Assistant service domain, for example light, switch, scene, input_boolean, input_number, input_select.",
+                        },
+                        "service": {
+                            "type": "string",
+                            "description": "Service name, for example turn_on, turn_off, toggle, set_value, select_option, activate.",
+                        },
+                        "entity_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Target entity IDs, for example light.jakes_room_1 or input_boolean.movie_mode.",
+                        },
+                        "data": {
+                            "type": "object",
+                            "description": "Extra service data, such as brightness_pct, rgb_color, value, option, temperature, or transition.",
+                            "additionalProperties": True,
+                        },
+                    },
+                    "required": ["domain", "service"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+
+    def _handle_function_calls(self, ws, event: dict[str, object]) -> bool:
+        response = event.get("response", {})
+        output = response.get("output", []) if isinstance(response, dict) else []
+        function_calls = [
+            item
+            for item in output
+            if isinstance(item, dict) and item.get("type") == "function_call"
+        ]
+        if not function_calls:
+            return False
+
+        for call in function_calls:
+            call_id = str(call.get("call_id", ""))
+            name = str(call.get("name", ""))
+            arguments = str(call.get("arguments", "{}") or "{}")
+            output_payload = self._execute_function_call(name, arguments)
+            self._send_event(
+                ws,
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": json.dumps(output_payload),
+                    },
+                },
+            )
+
+        self._send_event(ws, {"type": "response.create"})
+        return True
+
+    def _execute_function_call(self, name: str, arguments: str) -> dict[str, object]:
+        try:
+            args = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "message": f"Invalid tool arguments: {exc}"}
+
+        if name != "home_assistant_call_service":
+            return {"ok": False, "message": f"Unknown function: {name}"}
+
+        entity_ids = args.get("entity_ids")
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
+        if not isinstance(entity_ids, list):
+            entity_ids = None
+
+        data = args.get("data")
+        if not isinstance(data, dict):
+            data = {}
+
+        result = self.home_assistant.call_service(
+            domain=str(args.get("domain", "")),
+            service=str(args.get("service", "")),
+            entity_ids=[str(entity) for entity in entity_ids] if entity_ids else None,
+            data=data,
+        )
+        return {"ok": result.ok, "message": result.message, "data": result.data}
 
 
 class RealtimeSessionController:

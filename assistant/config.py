@@ -18,6 +18,8 @@ class AssistantConfig:
     openai_realtime_model: str
     openai_realtime_voice: str
     openai_realtime_instructions: str
+    home_assistant_url: str
+    home_assistant_token: str
     mqtt_host: str
     mqtt_port: int
     mqtt_username: str
@@ -121,6 +123,8 @@ def load_config() -> AssistantConfig:
             "You are the household smart display assistant. Reply briefly, clearly, and helpfully.",
         ).strip()
         or "You are the household smart display assistant. Reply briefly, clearly, and helpfully.",
+        home_assistant_url=os.getenv("HOME_ASSISTANT_URL", "").strip().rstrip("/"),
+        home_assistant_token=os.getenv("HOME_ASSISTANT_TOKEN", "").strip(),
         mqtt_host=os.getenv("MQTT_HOST", "homeassistant.local"),
         mqtt_port=int(os.getenv("MQTT_PORT", "1883")),
         mqtt_username=os.getenv("MQTT_USERNAME", ""),

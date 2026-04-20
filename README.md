@@ -45,6 +45,7 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 - **HA Lovelace kiosk** - Chromium in kiosk mode, launches automatically after boot and waits for HA to be reachable before opening
 - **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
 - **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
+- **Home Assistant voice control path** - Realtime can call HA services for entities, scenes, scripts, and helpers
 - **Manual HA trigger** - Assistant runtime exposes an HA button entity for manual Realtime testing
 - **Music Assistant playback** - Sendspin native player; appears automatically in MA 2.7+
 - **MQTT auto-discovery** - Device registers itself in HA with assistant state, mute, audio status, and control entities
@@ -71,6 +72,7 @@ assistant/
   assistant_service.py          # Main assistant runtime service
   audio.py                      # Audio probing / capture / playback helpers
   config.py                     # Assistant env/config loading
+  home_assistant.py             # HA REST service-call helper for Realtime tools
   realtime.py                   # OpenAI Realtime session client/controller
   state.py                      # Local assistant state store
   wakeword.py                   # OpenWakeWord integration
@@ -304,6 +306,19 @@ Example:
 sudo sed -i 's|^WAKE_ACK_MODE=.*|WAKE_ACK_MODE=tone|' /etc/smart-display/assistant.env
 sudo systemctl restart smart-display-assistant
 ```
+
+### Home Assistant voice actions
+
+Realtime can call a generic Home Assistant service tool when `HOME_ASSISTANT_URL` and `HOME_ASSISTANT_TOKEN` are configured in `/etc/smart-display/assistant.env`.
+
+Examples the assistant should be able to handle:
+
+- "Turn on Jake's room lights"
+- "Set my lamp to 30 percent"
+- "Turn on movie mode" if that is an `input_boolean`, scene, or script
+- "Set the helper to bedtime" if the entity and service are clear from the name/context
+
+The tool calls HA services directly, so helpers work through their normal domains, such as `input_boolean.turn_on`, `input_number.set_value`, and `input_select.select_option`.
 
 ---
 

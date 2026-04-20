@@ -49,9 +49,13 @@ class OpenWakeWordDetector:
     def status(self) -> str:
         return self._status
 
+    def active(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def start(self) -> None:
-        if self._thread is not None:
+        if self.active():
             return
+        self._thread = None
 
         if OpenWakeWordModel is None or np is None:
             self._status = "openwakeword-or-numpy-missing"
@@ -70,6 +74,7 @@ class OpenWakeWordDetector:
             logging.warning("OWW disabled: failed to load model %s: %s", self.config.oww_model, exc)
             return
 
+        self._stop_event.clear()
         self._status = "starting"
         self._thread = threading.Thread(target=self._run, name="oww-detector", daemon=True)
         self._thread.start()

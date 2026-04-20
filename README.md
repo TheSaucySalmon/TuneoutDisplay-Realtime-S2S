@@ -123,10 +123,12 @@ The script prompts you for:
 - OpenAI Realtime voice (default: `cedar`)
 - Home Assistant long-lived token
 - OpenWakeWord model and threshold
+- Wake acknowledgement mode (`tone`, `file`, or `off`)
 - For `generic_usb`: mic and speaker device names
 
 Settings are saved after the first run - re-running the script will pre-fill all prompts with your previous values, so you only need to change what's different.
 MQTT settings are stored in `/etc/smart-display/mqtt.env`, and assistant/runtime settings are stored in `/etc/smart-display/assistant.env`.
+If you later point `OWW_MODEL` at a custom `.onnx` file in `/etc/smart-display/assistant.env`, rerunning `configure.sh` will preserve that live value instead of rolling back to an older saved wake-word setting.
 
 The script installs and configures everything automatically, then offers to reboot when done.
 
@@ -271,6 +273,38 @@ sudo systemctl restart smart-display-touch-scroll
 
 Re-run `./configure.sh` and enter a new kiosk URL at the prompt, or edit `~/.config/labwc/autostart` directly.
 
+### Custom wake word
+
+OpenWakeWord model names are not magic phrases. A custom wake word like "Hey Felix" needs a trained `.onnx` model file.
+
+Recommended path on the Pi:
+
+```bash
+mkdir -p /home/jaker/TuneoutDisplay/models
+cp hey_fe_lix.onnx /home/jaker/TuneoutDisplay/models/hey_fe_lix.onnx
+sudo sed -i 's|^OWW_MODEL=.*|OWW_MODEL=/home/jaker/TuneoutDisplay/models/hey_fe_lix.onnx|' /etc/smart-display/assistant.env
+sudo systemctl restart smart-display-assistant
+```
+
+Keep trained wake-word models out of git unless you intentionally want to publish them. The repo ignores `models/*.onnx` and `models/*.tflite`.
+
+### Wake acknowledgement
+
+After a wake-word detection, the assistant can play a short local acknowledgement before opening the Realtime session.
+
+Modes:
+
+- `WAKE_ACK_MODE=tone` plays a tiny local tone through the assistant speaker.
+- `WAKE_ACK_MODE=file` plays a local audio file from `WAKE_ACK_FILE`.
+- `WAKE_ACK_MODE=off` disables the acknowledgement.
+
+Example:
+
+```bash
+sudo sed -i 's|^WAKE_ACK_MODE=.*|WAKE_ACK_MODE=tone|' /etc/smart-display/assistant.env
+sudo systemctl restart smart-display-assistant
+```
+
 ---
 
 ## Troubleshooting
@@ -302,6 +336,12 @@ sudo reboot
 - Check `/etc/smart-display/assistant.env` for `OPENAI_API_KEY` and Realtime settings
 - Check `sudo journalctl -u smart-display-assistant -f`
 - Test with the HA `Assistant Trigger` button before debugging wake word behavior
+
+**Wake word does not trigger**
+- Check `sudo journalctl -u smart-display-assistant -f`
+- Confirm `OWW_MODEL` points to a real `.onnx` file if using a custom phrase
+- Confirm `OWW_THRESHOLD`; lower it if the model misses you, raise it if it false-triggers
+- Confirm the configured mic still appears in `arecord -L`
 
 **`git pull` on the Pi says local files would be overwritten**
 - Check `git status`

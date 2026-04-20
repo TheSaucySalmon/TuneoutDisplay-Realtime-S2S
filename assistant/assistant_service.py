@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import struct
 import signal
+import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
@@ -351,6 +355,7 @@ class AssistantRuntimeService:
                 if self.realtime_session.active():
                     continue
 
+                self._ensure_wakeword_detector()
                 event = self.wakeword_detector.poll()
                 if event is not None:
                     self._start_realtime_session("wakeword")
@@ -399,12 +404,19 @@ class AssistantRuntimeService:
             self.publish_state()
             return
 
+        if reason == "wakeword":
+            self._stop_wakeword_detector()
+            self._play_wake_ack()
+
         started = self.realtime_session.start()
         if not started:
             logging.info("Realtime session already active; ignoring %s trigger.", reason)
+            if reason == "wakeword":
+                self._start_wakeword_detector()
             return
 
-        self._stop_wakeword_detector()
+        if reason != "wakeword":
+            self._stop_wakeword_detector()
         self._realtime_status = f"starting:{reason}"
         self.state_store.set_state("listening")
         self.publish_state()
@@ -446,9 +458,66 @@ class AssistantRuntimeService:
         self.wakeword_detector.start()
         logging.info("OWW status: %s", self.wakeword_detector.status)
 
+    def _ensure_wakeword_detector(self) -> None:
+        if self.wakeword_detector.active():
+            return
+        self._start_wakeword_detector()
+
     def _stop_wakeword_detector(self) -> None:
         self.wakeword_detector.stop()
         logging.info("OWW detector stopped.")
+
+    def _play_wake_ack(self) -> None:
+        mode = self.config.wake_ack_mode
+        if mode in {"", "off", "none", "false", "0"}:
+            return
+
+        try:
+            if mode == "file" and self.config.wake_ack_file:
+                self._play_wake_ack_file(self.config.wake_ack_file)
+                return
+            self._play_wake_ack_tone()
+        except Exception as exc:
+            logging.warning("Wake acknowledgement failed: %s", exc)
+
+    def _play_wake_ack_file(self, path: str) -> None:
+        ack_path = Path(path).expanduser()
+        if not ack_path.exists():
+            logging.warning("Wake acknowledgement file not found: %s", ack_path)
+            return
+
+        command = ["aplay", "-q", "-D", self.audio_manager.playback_device(), str(ack_path)]
+        logging.info("Playing wake acknowledgement file: %s", ack_path)
+        subprocess.run(command, check=False, timeout=3)
+
+    def _play_wake_ack_tone(self) -> None:
+        sample_rate = 24_000
+        duration_seconds = 0.12
+        frequency_hz = 740
+        volume = 0.18
+        sample_count = int(sample_rate * duration_seconds)
+        pcm = bytearray()
+        for index in range(sample_count):
+            fade = min(index / 240, (sample_count - index) / 240, 1.0)
+            sample = int(math.sin(2 * math.pi * frequency_hz * index / sample_rate) * 32767 * volume * fade)
+            pcm.extend(struct.pack("<h", sample))
+
+        command = [
+            "aplay",
+            "-q",
+            "-D",
+            self.audio_manager.playback_device(),
+            "-r",
+            str(sample_rate),
+            "-f",
+            "S16_LE",
+            "-c",
+            "1",
+            "-t",
+            "raw",
+        ]
+        logging.info("Playing wake acknowledgement tone.")
+        subprocess.run(command, input=bytes(pcm), check=False, timeout=3)
 
 
 class suppress:

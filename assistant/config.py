@@ -37,6 +37,8 @@ class AssistantConfig:
     oww_input_device: str
     oww_cooldown_seconds: float
     oww_listen_window_seconds: float
+    wake_ack_mode: str
+    wake_ack_file: str
     realtime_capture_seconds: float
     realtime_input_rate: int
     realtime_output_rate: int
@@ -138,6 +140,8 @@ def load_config() -> AssistantConfig:
         oww_input_device=os.getenv("OWW_INPUT_DEVICE", "").strip(),
         oww_cooldown_seconds=float(os.getenv("OWW_COOLDOWN_SECONDS", "8")),
         oww_listen_window_seconds=float(os.getenv("OWW_LISTEN_WINDOW_SECONDS", "8")),
+        wake_ack_mode=os.getenv("WAKE_ACK_MODE", "tone").strip().lower() or "tone",
+        wake_ack_file=os.getenv("WAKE_ACK_FILE", "").strip(),
         realtime_capture_seconds=float(os.getenv("REALTIME_CAPTURE_SECONDS", "6")),
         realtime_input_rate=int(os.getenv("REALTIME_INPUT_RATE", "24000")),
         realtime_output_rate=int(os.getenv("REALTIME_OUTPUT_RATE", "24000")),

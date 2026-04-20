@@ -97,6 +97,23 @@ if [ -f "$_SETTINGS_FILE" ]; then
     echo ""
 fi
 
+# If the live assistant env was edited after the last configure run (for
+# example to point OWW_MODEL at a custom .onnx file), prefer that value so a
+# rerun does not silently roll the device back to an older saved setting.
+_ASSISTANT_ENV_FILE="/etc/smart-display/assistant.env"
+if sudo test -f "$_ASSISTANT_ENV_FILE"; then
+    _existing_oww_model="$(sudo bash -c 'source /etc/smart-display/assistant.env 2>/dev/null; printf "%s" "${OWW_MODEL:-}"' || true)"
+    _existing_oww_threshold="$(sudo bash -c 'source /etc/smart-display/assistant.env 2>/dev/null; printf "%s" "${OWW_THRESHOLD:-}"' || true)"
+    _existing_wake_ack_mode="$(sudo bash -c 'source /etc/smart-display/assistant.env 2>/dev/null; printf "%s" "${WAKE_ACK_MODE:-}"' || true)"
+    _existing_wake_ack_file="$(sudo bash -c 'source /etc/smart-display/assistant.env 2>/dev/null; printf "%s" "${WAKE_ACK_FILE:-}"' || true)"
+    [ -n "$_existing_oww_model" ] && OWW_MODEL="$_existing_oww_model"
+    [ -n "$_existing_oww_threshold" ] && OWW_THRESHOLD="$_existing_oww_threshold"
+    [ -n "$_existing_wake_ack_mode" ] && WAKE_ACK_MODE="$_existing_wake_ack_mode"
+    [ -n "$_existing_wake_ack_file" ] && WAKE_ACK_FILE="$_existing_wake_ack_file"
+    unset _existing_oww_model _existing_oww_threshold _existing_wake_ack_mode _existing_wake_ack_file
+fi
+unset _ASSISTANT_ENV_FILE
+
 # For each prompt, use the saved (or hardcoded) value as the default.
 # The bracket shows exactly what will be used if the user just presses ENTER.
 
@@ -214,6 +231,27 @@ _def="${OWW_THRESHOLD:-0.5}"
 read -rp "  Wake threshold          [${_def}]: " _in
 OWW_THRESHOLD="${_in:-${_def}}"
 
+_def="${WAKE_ACK_MODE:-tone}"
+read -rp "  Wake ack mode           [${_def}]: " _in
+WAKE_ACK_MODE="${_in:-${_def}}"
+case "$WAKE_ACK_MODE" in
+    tone|file|off|none)
+        ;;
+    *)
+        warn "Unknown wake ack mode '$WAKE_ACK_MODE' — defaulting to tone."
+        WAKE_ACK_MODE="tone"
+        ;;
+esac
+
+_def="${WAKE_ACK_FILE:-}"
+read -rp "  Wake ack audio file     [${_def:-none}]: " _in
+if [ -z "$_in" ]; then
+    WAKE_ACK_FILE="${_def}"
+else
+    WAKE_ACK_FILE="${_in}"
+    [ "$WAKE_ACK_FILE" = "none" ] && WAKE_ACK_FILE=""
+fi
+
 if [ "$AUDIO_PROFILE" = "generic_usb" ]; then
     echo ""
     echo "  Generic Audio"
@@ -267,6 +305,8 @@ OPENAI_REALTIME_VOICE="$OPENAI_REALTIME_VOICE"
 HOME_ASSISTANT_TOKEN="$HOME_ASSISTANT_TOKEN"
 OWW_MODEL="$OWW_MODEL"
 OWW_THRESHOLD="$OWW_THRESHOLD"
+WAKE_ACK_MODE="$WAKE_ACK_MODE"
+WAKE_ACK_FILE="$WAKE_ACK_FILE"
 GENERIC_MIC_DEVICE="${GENERIC_MIC_DEVICE:-}"
 GENERIC_SPEAKER_DEVICE="${GENERIC_SPEAKER_DEVICE:-}"
 SAVEEOF
@@ -890,6 +930,8 @@ printf -v DEVICE_NAME_Q '%q' "$DEVICE_NAME"
 printf -v DEVICE_ID_Q '%q' "$DEVICE_ID"
 printf -v OWW_MODEL_Q '%q' "$OWW_MODEL"
 printf -v OWW_THRESHOLD_Q '%q' "$OWW_THRESHOLD"
+printf -v WAKE_ACK_MODE_Q '%q' "$WAKE_ACK_MODE"
+printf -v WAKE_ACK_FILE_Q '%q' "$WAKE_ACK_FILE"
 printf -v AUDIO_PROFILE_Q '%q' "$AUDIO_PROFILE"
 printf -v GENERIC_MIC_DEVICE_Q '%q' "${GENERIC_MIC_DEVICE:-}"
 printf -v GENERIC_SPEAKER_DEVICE_Q '%q' "${GENERIC_SPEAKER_DEVICE:-}"
@@ -910,6 +952,8 @@ DEVICE_NAME=$DEVICE_NAME_Q
 DEVICE_ID=$DEVICE_ID_Q
 OWW_MODEL=$OWW_MODEL_Q
 OWW_THRESHOLD=$OWW_THRESHOLD_Q
+WAKE_ACK_MODE=$WAKE_ACK_MODE_Q
+WAKE_ACK_FILE=$WAKE_ACK_FILE_Q
 AUDIO_PROFILE=$AUDIO_PROFILE_Q
 GENERIC_MIC_DEVICE=$GENERIC_MIC_DEVICE_Q
 GENERIC_SPEAKER_DEVICE=$GENERIC_SPEAKER_DEVICE_Q

@@ -94,13 +94,15 @@ class OpenAIRealtimeClient:
             if player_stdin is None:
                 raise RuntimeError("speaker playback stdin unavailable")
 
-            deadline = time.time() + self.config.realtime_response_timeout_seconds
+            last_activity_at = time.time()
             while not stop_event.is_set():
-                timeout = max(1, int(deadline - time.time()))
-                if timeout <= 0:
+                remaining = self.config.realtime_response_timeout_seconds - (time.time() - last_activity_at)
+                timeout = max(1, int(remaining))
+                if remaining <= 0:
                     raise TimeoutError("timed out waiting for realtime response")
                 ws.settimeout(timeout)
                 event = json.loads(ws.recv())
+                last_activity_at = time.time()
                 event_type = str(event.get("type", ""))
 
                 if event_type == "response.created":
@@ -143,7 +145,7 @@ class OpenAIRealtimeClient:
 
                 if event_type == "response.done":
                     if self._handle_function_calls(ws, event):
-                        deadline = time.time() + self.config.realtime_response_timeout_seconds
+                        last_activity_at = time.time()
                         continue
                     break
 

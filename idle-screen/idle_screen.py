@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v9"
+APP_VERSION = "idle-v10"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -414,33 +414,36 @@ class IdleScreen:
         self.canvas.create_text(x1 + 42, y1 + 27, text=message, anchor="nw", fill=self.fg, font=self.status_font)
 
     def _draw_muted_icon(self, width: int, margin: int) -> None:
-        size = 72
+        size = 86
         x = width - margin - size
-        y = margin - 4
+        y = margin - 2
         cx = x + size / 2
-        top = y + size * 0.10
-        body_w = size * 0.42
-        body_h = size * 0.58
+        top = y + size * 0.06
+        body_w = size * 0.44
+        body_h = size * 0.60
         body_x1 = cx - body_w / 2
         body_x2 = cx + body_w / 2
         body_y1 = top
         body_y2 = top + body_h
 
-        self._rounded_rect(body_x1, body_y1, body_x2, body_y2, radius=int(body_w / 2), fill=self.danger, outline=self.danger)
+        cap_r = body_w / 2
+        self.canvas.create_oval(body_x1, body_y1, body_x2, body_y1 + body_w, fill=self.danger, outline="")
+        self.canvas.create_rectangle(body_x1, body_y1 + cap_r, body_x2, body_y2 - cap_r, fill=self.danger, outline="")
+        self.canvas.create_oval(body_x1, body_y2 - body_w, body_x2, body_y2, fill=self.danger, outline="")
 
-        left_x = cx - size * 0.34
-        right_x = cx + size * 0.34
-        side_top = top + size * 0.26
-        side_bottom = top + size * 0.62
-        arc_box = (left_x, side_bottom - size * 0.32, right_x, side_bottom + size * 0.32)
-        line_w = max(5, int(size * 0.085))
+        line_w = max(6, int(size * 0.085))
+        left_x = cx - size * 0.36
+        right_x = cx + size * 0.36
+        side_top = top + size * 0.31
+        side_bottom = top + size * 0.68
+        arc_box = (left_x, side_bottom - size * 0.34, right_x, side_bottom + size * 0.34)
 
         self.canvas.create_line(left_x, side_top, left_x, side_bottom, fill=self.danger, width=line_w, capstyle=tk.ROUND)
         self.canvas.create_line(right_x, side_top, right_x, side_bottom, fill=self.danger, width=line_w, capstyle=tk.ROUND)
         self.canvas.create_arc(*arc_box, start=180, extent=180, style=tk.ARC, outline=self.danger, width=line_w)
-        self.canvas.create_line(cx, side_bottom + size * 0.30, cx, y + size * 0.86, fill=self.danger, width=line_w, capstyle=tk.ROUND)
-        self.canvas.create_line(cx - size * 0.26, y + size * 0.88, cx + size * 0.26, y + size * 0.88, fill=self.danger, width=line_w + 2, capstyle=tk.ROUND)
-        self.canvas.create_line(x + size * 0.09, y + size * 0.14, x + size * 0.91, y + size * 0.92, fill=self.danger, width=line_w + 2, capstyle=tk.ROUND)
+        self.canvas.create_line(cx, top + size * 0.79, cx, y + size * 0.88, fill=self.danger, width=line_w, capstyle=tk.ROUND)
+        self.canvas.create_line(cx - size * 0.25, y + size * 0.90, cx + size * 0.25, y + size * 0.90, fill=self.danger, width=line_w + 3, capstyle=tk.ROUND)
+        self.canvas.create_line(x + size * 0.08, y + size * 0.17, x + size * 0.88, y + size * 0.91, fill=self.danger, width=line_w + 3, capstyle=tk.ROUND)
 
     def _rounded_rect(self, x1: float, y1: float, x2: float, y2: float, *, radius: int, fill: str, outline: str) -> None:
         points = [

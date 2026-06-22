@@ -115,7 +115,7 @@ class IdleScreen:
         self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(52 * scale), weight="bold")
         self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(18 * scale), weight="bold")
         self.small_font = tkfont.Font(family="DejaVu Sans", size=int(13 * scale))
-        self.mark_font = tkfont.Font(family="DejaVu Sans", size=int(26 * scale), weight="bold")
+        self.mark_font = tkfont.Font(family="DejaVu Sans", size=int(48 * scale), weight="bold")
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -146,7 +146,7 @@ class IdleScreen:
         weather.grid(row=1, column=0, sticky="ew", pady=(28, 0))
         weather.columnconfigure(1, weight=1)
 
-        self.weather_mark = tk.Label(weather, text="--", fg=self.accent, bg=self.panel, font=self.mark_font, width=4)
+        self.weather_mark = tk.Label(weather, text="--", fg=self.accent, bg=self.panel, font=self.mark_font, width=3)
         self.weather_mark.grid(row=0, column=0, rowspan=3, sticky="nsew", padx=(0, 20))
 
         self.temp_label = tk.Label(weather, text="--°", fg=self.fg, bg=self.panel, font=self.temp_font)

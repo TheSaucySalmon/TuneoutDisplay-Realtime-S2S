@@ -125,17 +125,6 @@ _def="${HA_SERVER:-http://homeassistant.local:8123}"
 read -rp "  Home Assistant URL  [${_def}]: " _in
 HA_SERVER="${_in:-${_def}}"
 
-_def="${KIOSK_URL:-}"
-read -rp "  Lovelace kiosk URL       [${_def:-none}]: " _in
-# Accept an explicit blank entry ("") to clear a previously saved kiosk URL.
-# Pressing ENTER keeps the saved value; typing a space then ENTER also clears.
-if [ -z "$_in" ]; then
-    KIOSK_URL="${_def}"
-else
-    KIOSK_URL="${_in}"
-    [ "$KIOSK_URL" = "none" ] && KIOSK_URL=""
-fi
-
 echo ""
 echo "  ── MQTT (for HA device auto-discovery) ──"
 echo "  The MQTT bridge always registers display brightness."
@@ -274,7 +263,6 @@ echo -e "  ${BOLD}Summary${NC}"
 echo "  ┌────────────────────────────────────────────────────────┐"
 printf  "  │  Device name  : %-38s│\n" "$DEVICE_NAME"
 printf  "  │  HA server    : %-38s│\n" "$HA_SERVER"
-printf  "  │  Kiosk URL    : %-38s│\n" "$([ -n "$KIOSK_URL" ] && echo "${KIOSK_URL:0:38}" || echo "skipped")"
 printf  "  │  MQTT broker  : %-38s│\n" "${MQTT_HOST}:${MQTT_PORT}"
 printf  "  │  MQTT auth    : %-38s│\n" "$([ -n "$MQTT_USERNAME" ] && echo "yes (${MQTT_USERNAME})" || echo "none")"
 printf  "  │  Audio        : %-38s│\n" "$AUDIO_PROFILE"
@@ -293,7 +281,6 @@ CONFIRM="${CONFIRM:-Y}"
 cat > "$_SETTINGS_FILE" << SAVEEOF
 DEVICE_NAME="$DEVICE_NAME"
 HA_SERVER="$HA_SERVER"
-KIOSK_URL="$KIOSK_URL"
 MQTT_HOST="$MQTT_HOST"
 MQTT_PORT="$MQTT_PORT"
 MQTT_USERNAME="$MQTT_USERNAME"
@@ -1065,94 +1052,14 @@ TSEOF
     success "Touch scroll daemon enabled and started."
 fi
 
-# ── Kiosk Mode (optional) ─────────────────────────────────────────────────────
-if [ -n "$KIOSK_URL" ]; then
-    section "Kiosk Mode"
-
-    info "Enabling desktop autologin..."
-    sudo raspi-config nonint do_boot_behaviour B4
-
-    info "Disabling console blanking..."
-    if ! grep -q "consoleblank=0" /boot/firmware/cmdline.txt; then
-        sudo sed -i 's/$/ consoleblank=0/' /boot/firmware/cmdline.txt
-        success "consoleblank=0 added to cmdline.txt"
-    else
-        info "consoleblank=0 already present."
-    fi
-
-    # Use labwc's native autostart (shell script) rather than XDG .desktop files.
-    # labwc on Raspberry Pi OS Trixie does not reliably process ~/.config/autostart/
-    # but always executes ~/.config/labwc/autostart if it is marked executable.
-    #
-    # --ozone-platform=wayland   → native Wayland rendering (fixes touch/gesture support)
-    # --touch-events=enabled     → explicitly enable touch input
-    # --disable-pinch            → prevent accidental pinch-zoom on kiosk
-    # The curl retry loop waits for HA to be reachable before launching Chromium,
-    # preventing a permanent error page if the network is slow to come up.
-    info "Creating labwc kiosk autostart..."
-    mkdir -p "$CURRENT_HOME/.config/labwc"
-    cat > "$CURRENT_HOME/.config/labwc/autostart" << EOF
-# Hide the taskbar panel
-pkill lxpanel || true
-pkill wfbar || true
-
-# Re-apply WM8960 hardware speaker level (0 dB = numid=13 value 122).
-# This runs here in addition to smart-display-audio-init.service because the
-# audio-init service fires early in boot before the codec registers have fully
-# settled; by the time the desktop session starts the driver is stable.
-amixer -c seeed2micvoicec cset numid=13 122,122 -q 2>/dev/null || true
-
-# Hide the mouse cursor
-unclutter --timeout 1 &
-
-# Launch Chromium in kiosk mode.
-# Explicitly export Wayland session variables — the subshell used for the
-# curl retry loop doesn't always inherit them from the labwc session.
-# Waits for Home Assistant to be reachable before opening the browser
-# so the display never gets stuck on an error page at boot.
-(
-  export WAYLAND_DISPLAY="\${WAYLAND_DISPLAY:-wayland-0}"
-  export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}"
-  export XDG_SESSION_TYPE=wayland
-
-  until curl -s --head "$HA_SERVER" > /dev/null 2>&1; do
-    sleep 3
-  done
-  chromium \
-    --kiosk \
-    --ozone-platform=wayland \
-    --touch-events=enabled \
-    --noerrdialogs \
-    --disable-infobars \
-    --no-first-run \
-    --disable-session-crashed-bubble \
-    --hide-scrollbars \
-    --password-store=basic \
-    --check-for-update-interval=31536000 \
-    --disable-dev-shm-usage \
-    --renderer-process-limit=1 \
-    --disable-extensions \
-    --disable-sync \
-    --disable-background-networking \
-    --disable-features=TranslateUI \
-    --js-flags="--max-old-space-size=192" \
-    "$KIOSK_URL"
-) &
-EOF
-    chmod +x "$CURRENT_HOME/.config/labwc/autostart"
-    success "labwc kiosk autostart created and marked executable."
-else
-    info "No kiosk URL provided — skipping kiosk mode setup."
-fi
-
 # ── Flutter Display Shell ─────────────────────────────────────────────────────
 section "Flutter Display Shell"
 
 # The native Smart Display UI lives in smart_display/ — a Flutter app that
 # renders the liquid-glass idle/dashboard screens with a GPU fragment shader and
 # runs as a native GTK/Wayland app under labwc (no Chromium, no browser). This
-# installs the Flutter SDK, builds the app, and — only when no Lovelace kiosk URL
-# was provided — autostarts it on boot so it does not clobber a Chromium setup.
+# installs the Flutter SDK, builds the app, and autostarts it on boot as the
+# display.
 
 FLUTTER_DIR="$CURRENT_HOME/flutter"
 FLUTTER_BIN="$FLUTTER_DIR/bin/flutter"
@@ -1198,15 +1105,18 @@ else
         warn "Retry manually: cd $FLUTTER_APP_SRC && flutter build linux --release"
     fi
 
-    # Autostart the native shell only when Chromium kiosk is NOT in use.
-    if [ -z "$KIOSK_URL" ] && [ -x "$FLUTTER_APP_BIN" ]; then
-        info "No kiosk URL set — autostarting the Flutter shell on boot..."
+    # Autostart the native Flutter shell as the boot display.
+    if [ -x "$FLUTTER_APP_BIN" ]; then
+        info "Autostarting the Flutter shell on boot..."
         sudo raspi-config nonint do_boot_behaviour B4
 
+        info "Disabling console blanking..."
         if ! grep -q "consoleblank=0" /boot/firmware/cmdline.txt; then
             sudo sed -i 's/$/ consoleblank=0/' /boot/firmware/cmdline.txt
         fi
 
+        # labwc on Raspberry Pi OS Trixie reliably runs ~/.config/labwc/autostart
+        # (marked executable) but not XDG .desktop autostart files.
         _SEEED_AUDIO_FIX=""
         if $USE_SEEED_AUDIO; then
             _SEEED_AUDIO_FIX='amixer -c seeed2micvoicec cset numid=13 122,122 -q 2>/dev/null || true'
@@ -1229,9 +1139,6 @@ EOF
         chmod +x "$CURRENT_HOME/.config/labwc/autostart"
         unset _SEEED_AUDIO_FIX
         success "Flutter shell will launch on boot (autologin enabled)."
-    elif [ -n "$KIOSK_URL" ]; then
-        info "Kiosk URL is set — leaving Chromium as the boot display."
-        info "Run the Flutter shell manually any time: $FLUTTER_APP_BIN"
     fi
 fi
 
@@ -1395,7 +1302,7 @@ echo "  │  4. Music Assistant (2.7+): Sendspin is always-on in MA.    │"
 echo "  │     No provider setup needed — your device appears as:     │"
 printf "  │     %-57s│\n" "'$DEVICE_NAME'"
 echo "  │                                                             │"
-echo "  │  5. Configure kiosk and test the display shell.             │"
+echo "  │  5. The Flutter display shell launches on boot.             │"
 echo "  └─────────────────────────────────────────────────────────────┘"
 echo ""
 echo "  To check all service status after reboot:"

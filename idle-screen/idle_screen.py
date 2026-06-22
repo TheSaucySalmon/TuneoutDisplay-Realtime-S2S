@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v12"
+APP_VERSION = "idle-v13"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -414,10 +414,10 @@ class IdleScreen:
         self.canvas.create_text(x1 + 42, y1 + 27, text=message, anchor="nw", fill=self.fg, font=self.status_font)
 
     def _draw_muted_icon(self, width: int, margin: int) -> None:
-        icon_w = 76
-        icon_h = 126
+        icon_w = 74
+        icon_h = 142
         x = width - margin - icon_w
-        y = margin - 8
+        y = margin - 10
         red = self.danger
 
         def sx(value: float) -> float:
@@ -426,24 +426,58 @@ class IdleScreen:
         def sy(value: float) -> float:
             return y + icon_h * value / 497
 
-        line_w = max(5, int(icon_w * 0.075))
+        line_w = max(4, int(icon_w * 13 / 257))
+        cut_w = max(line_w + 6, int(icon_w * 25 / 257))
 
-        body_x1 = sx(74)
-        body_x2 = sx(171)
-        body_y1 = sy(108)
-        body_y2 = sy(328)
+        body_x1 = sx(51)
+        body_x2 = sx(170)
+        body_y1 = sy(107)
+        body_y2 = sy(341)
         body_w = body_x2 - body_x1
         self.canvas.create_oval(body_x1, body_y1, body_x2, body_y1 + body_w, fill=red, outline="")
-        self.canvas.create_rectangle(body_x1, body_y1 + body_w / 2, body_x2, body_y2 - body_w / 2, fill=red, outline="")
+        self.canvas.create_rectangle(body_x1, body_y1 + body_w / 2, body_x2, body_y2 - body_w / 2 + 1, fill=red, outline="")
         self.canvas.create_oval(body_x1, body_y2 - body_w, body_x2, body_y2, fill=red, outline="")
 
-        self.canvas.create_line(sx(28), sy(220), sx(28), sy(284), fill=red, width=line_w, capstyle=tk.ROUND)
-        self.canvas.create_line(sx(190), sy(220), sx(190), sy(284), fill=red, width=line_w, capstyle=tk.ROUND)
-        self.canvas.create_arc(sx(28), sy(230), sx(190), sy(374), start=180, extent=180, style=tk.ARC, outline=red, width=line_w)
+        self.canvas.create_line(sx(28), sy(222), sx(28), sy(277), fill=red, width=line_w, capstyle=tk.ROUND)
+        self._draw_cubic_path(
+            [
+                ((28, 277), (28, 342), (77, 374), (110, 374)),
+                ((110, 374), (150, 374), (193, 342), (193, 277)),
+            ],
+            sx,
+            sy,
+            fill=red,
+            width=line_w,
+        )
+        self.canvas.create_line(sx(193), sy(222), sx(193), sy(277), fill=red, width=line_w, capstyle=tk.ROUND)
 
-        self.canvas.create_line(sx(109), sy(352), sx(109), sy(386), fill=red, width=line_w, capstyle=tk.ROUND)
-        self.canvas.create_line(sx(60), sy(392), sx(158), sy(392), fill=red, width=line_w + 2, capstyle=tk.ROUND)
-        self.canvas.create_line(sx(12), sy(128), sx(214), sy(392), fill=red, width=line_w + 3, capstyle=tk.ROUND)
+        self.canvas.create_line(sx(110), sy(374), sx(110), sy(423), fill=red, width=line_w, capstyle=tk.ROUND)
+        self.canvas.create_line(sx(62), sy(431), sx(158), sy(431), fill=red, width=line_w, capstyle=tk.ROUND)
+        self.canvas.create_line(sx(10), sy(128), sx(209), sy(431), fill=self.bg, width=cut_w, capstyle=tk.ROUND)
+        self.canvas.create_line(sx(10), sy(128), sx(209), sy(431), fill=red, width=line_w, capstyle=tk.ROUND)
+
+    def _draw_cubic_path(self, segments, sx, sy, *, fill: str, width: int) -> None:
+        points: list[float] = []
+        for index, (p0, p1, p2, p3) in enumerate(segments):
+            steps = 18
+            start = 0 if index == 0 else 1
+            for step in range(start, steps + 1):
+                t = step / steps
+                mt = 1 - t
+                px = (
+                    mt * mt * mt * p0[0]
+                    + 3 * mt * mt * t * p1[0]
+                    + 3 * mt * t * t * p2[0]
+                    + t * t * t * p3[0]
+                )
+                py = (
+                    mt * mt * mt * p0[1]
+                    + 3 * mt * mt * t * p1[1]
+                    + 3 * mt * t * t * p2[1]
+                    + t * t * t * p3[1]
+                )
+                points.extend([sx(px), sy(py)])
+        self.canvas.create_line(points, fill=fill, width=width, capstyle=tk.ROUND, joinstyle=tk.ROUND, smooth=True)
 
     def _rounded_rect(self, x1: float, y1: float, x2: float, y2: float, *, radius: int, fill: str, outline: str) -> None:
         points = [

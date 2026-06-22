@@ -1145,6 +1145,96 @@ else
     info "No kiosk URL provided — skipping kiosk mode setup."
 fi
 
+# ── Flutter Display Shell ─────────────────────────────────────────────────────
+section "Flutter Display Shell"
+
+# The native Smart Display UI lives in smart_display/ — a Flutter app that
+# renders the liquid-glass idle/dashboard screens with a GPU fragment shader and
+# runs as a native GTK/Wayland app under labwc (no Chromium, no browser). This
+# installs the Flutter SDK, builds the app, and — only when no Lovelace kiosk URL
+# was provided — autostarts it on boot so it does not clobber a Chromium setup.
+
+FLUTTER_DIR="$CURRENT_HOME/flutter"
+FLUTTER_BIN="$FLUTTER_DIR/bin/flutter"
+FLUTTER_APP_SRC="$SCRIPT_DIR/smart_display"
+
+case "$(uname -m)" in
+    aarch64|arm64) FLUTTER_ARCH="arm64" ;;
+    x86_64)        FLUTTER_ARCH="x64"   ;;
+    *)             FLUTTER_ARCH="arm64" ;;
+esac
+FLUTTER_APP_BIN="$FLUTTER_APP_SRC/build/linux/$FLUTTER_ARCH/release/bundle/smart_display"
+
+if [ ! -d "$FLUTTER_APP_SRC" ]; then
+    warn "smart_display/ not found next to configure.sh — skipping Flutter shell."
+    warn "Pull the latest repo (cd ~/TuneoutDisplay && git pull) and re-run."
+else
+    info "Installing Flutter build dependencies..."
+    sudo apt install -y clang cmake ninja-build pkg-config libgtk-3-dev curl unzip
+
+    if [ ! -x "$FLUTTER_BIN" ]; then
+        info "Cloning Flutter SDK (stable) to $FLUTTER_DIR — large download, be patient..."
+        git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$FLUTTER_DIR"
+    else
+        info "Flutter SDK already present — fetching latest stable..."
+        git -C "$FLUTTER_DIR" pull --ff-only 2>/dev/null || true
+    fi
+
+    # Put flutter on PATH for interactive shells (idempotent).
+    if ! grep -q 'flutter/bin' "$CURRENT_HOME/.bashrc" 2>/dev/null; then
+        echo "export PATH=\"\$PATH:$FLUTTER_DIR/bin\"" >> "$CURRENT_HOME/.bashrc"
+    fi
+    export PATH="$PATH:$FLUTTER_DIR/bin"
+
+    info "Enabling the Linux desktop target..."
+    "$FLUTTER_BIN" --disable-analytics >/dev/null 2>&1 || true
+    "$FLUTTER_BIN" config --enable-linux-desktop >/dev/null 2>&1 || true
+
+    info "Building the Smart Display app (the FIRST build on a Pi is slow — several minutes)..."
+    if ( cd "$FLUTTER_APP_SRC" && "$FLUTTER_BIN" pub get && "$FLUTTER_BIN" build linux --release ); then
+        success "Smart Display app built: $FLUTTER_APP_BIN"
+    else
+        warn "Flutter build failed — see output above."
+        warn "Retry manually: cd $FLUTTER_APP_SRC && flutter build linux --release"
+    fi
+
+    # Autostart the native shell only when Chromium kiosk is NOT in use.
+    if [ -z "$KIOSK_URL" ] && [ -x "$FLUTTER_APP_BIN" ]; then
+        info "No kiosk URL set — autostarting the Flutter shell on boot..."
+        sudo raspi-config nonint do_boot_behaviour B4
+
+        if ! grep -q "consoleblank=0" /boot/firmware/cmdline.txt; then
+            sudo sed -i 's/$/ consoleblank=0/' /boot/firmware/cmdline.txt
+        fi
+
+        _SEEED_AUDIO_FIX=""
+        if $USE_SEEED_AUDIO; then
+            _SEEED_AUDIO_FIX='amixer -c seeed2micvoicec cset numid=13 122,122 -q 2>/dev/null || true'
+        fi
+
+        mkdir -p "$CURRENT_HOME/.config/labwc"
+        cat > "$CURRENT_HOME/.config/labwc/autostart" << EOF
+# Hide the taskbar panel
+pkill lxpanel || true
+pkill wfbar || true
+
+$_SEEED_AUDIO_FIX
+
+# Hide the mouse cursor
+unclutter --timeout 1 &
+
+# Launch the native Flutter Smart Display shell
+$FLUTTER_APP_BIN &
+EOF
+        chmod +x "$CURRENT_HOME/.config/labwc/autostart"
+        unset _SEEED_AUDIO_FIX
+        success "Flutter shell will launch on boot (autologin enabled)."
+    elif [ -n "$KIOSK_URL" ]; then
+        info "Kiosk URL is set — leaving Chromium as the boot display."
+        info "Run the Flutter shell manually any time: $FLUTTER_APP_BIN"
+    fi
+fi
+
 # ── Home Assistant Setup README ───────────────────────────────────────────────
 section "Generating Home Assistant Setup README"
 

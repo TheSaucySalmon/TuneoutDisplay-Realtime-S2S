@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v4"
+APP_VERSION = "idle-v5"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -112,6 +112,7 @@ class IdleScreen:
         self.accent = "#7ae7f5"
         self.accent_2 = "#315f73"
         self.warn = "#f1c66f"
+        self.danger = "#ff5b6e"
 
         self.root.title("Smart Display Idle")
         self.root.configure(bg=self.bg)
@@ -291,15 +292,6 @@ class IdleScreen:
             fill=self.accent,
             font=self.label_font,
         )
-        self.canvas.create_text(
-            margin,
-            margin + 25,
-            text="waiting for activity",
-            anchor="nw",
-            fill=self.subtle,
-            font=self.small_font,
-        )
-
     def _draw_version(self, width: int, height: int) -> None:
         self.canvas.create_text(
             width - 10,
@@ -354,7 +346,7 @@ class IdleScreen:
         temp_id = self.canvas.create_text(
             text_x,
             y1 + 17,
-            text=f"{self.weather_data['temp']} deg",
+            text=f"{self.weather_data['temp']}°F",
             anchor="nw",
             fill=self.fg,
             font=self.temp_font,
@@ -387,22 +379,23 @@ class IdleScreen:
         s = size / 100
 
         if kind in {"sun", "partly"}:
-            self.canvas.create_oval(cx - 18 * s, cy - 18 * s, cx + 18 * s, cy + 18 * s, fill=self.warn, outline="")
+            sun_y = cy - (12 * s if kind == "partly" else 0)
+            self.canvas.create_oval(cx - 18 * s, sun_y - 18 * s, cx + 18 * s, sun_y + 18 * s, fill=self.warn, outline="")
             for angle in range(0, 360, 45):
                 dx = math.cos(math.radians(angle))
                 dy = math.sin(math.radians(angle))
-                self.canvas.create_line(cx + dx * 26 * s, cy + dy * 26 * s, cx + dx * 36 * s, cy + dy * 36 * s, fill=self.warn, width=max(2, int(3 * s)))
+                self.canvas.create_line(cx + dx * 25 * s, sun_y + dy * 25 * s, cx + dx * 33 * s, sun_y + dy * 33 * s, fill=self.warn, width=max(2, int(3 * s)))
 
         if kind in {"cloud", "partly", "rain", "snow", "storm", "fog"}:
-            cloud_y = cy + (9 * s if kind == "partly" else 0)
-            self.canvas.create_oval(cx - 34 * s, cloud_y - 4 * s, cx - 4 * s, cloud_y + 26 * s, fill=self.accent, outline="")
-            self.canvas.create_oval(cx - 18 * s, cloud_y - 20 * s, cx + 20 * s, cloud_y + 18 * s, fill=self.accent, outline="")
-            self.canvas.create_oval(cx + 4 * s, cloud_y - 8 * s, cx + 36 * s, cloud_y + 24 * s, fill=self.accent, outline="")
-            self.canvas.create_rectangle(cx - 32 * s, cloud_y + 8 * s, cx + 34 * s, cloud_y + 26 * s, fill=self.accent, outline="")
+            cloud_y = cy + (8 * s if kind == "partly" else -2 * s)
+            self.canvas.create_oval(cx - 32 * s, cloud_y - 2 * s, cx - 4 * s, cloud_y + 24 * s, fill=self.accent, outline="")
+            self.canvas.create_oval(cx - 18 * s, cloud_y - 17 * s, cx + 18 * s, cloud_y + 17 * s, fill=self.accent, outline="")
+            self.canvas.create_oval(cx + 3 * s, cloud_y - 6 * s, cx + 34 * s, cloud_y + 23 * s, fill=self.accent, outline="")
+            self.canvas.create_rectangle(cx - 30 * s, cloud_y + 8 * s, cx + 32 * s, cloud_y + 24 * s, fill=self.accent, outline="")
 
         if kind == "rain":
             for dx in (-18, 0, 18):
-                self.canvas.create_line(cx + dx * s, cy + 26 * s, cx + (dx - 7) * s, cy + 42 * s, fill="#84e7f4", width=max(2, int(3 * s)))
+                self.canvas.create_line(cx + dx * s, cy + 24 * s, cx + (dx - 6) * s, cy + 39 * s, fill="#b7f6ff", width=max(2, int(3 * s)))
         elif kind == "snow":
             for dx in (-18, 0, 18):
                 self.canvas.create_text(cx + dx * s, cy + 38 * s, text="*", anchor="center", fill="#d7f8ff", font=self.weather_font)
@@ -414,6 +407,10 @@ class IdleScreen:
                 self.canvas.create_line(cx - 34 * s, cy + offset * s, cx + 34 * s, cy + offset * s, fill=self.muted, width=max(2, int(3 * s)))
 
     def _draw_status(self, width: int, margin: int, state_name: str) -> None:
+        if state_name == "muted":
+            self._draw_muted_icon(width, margin)
+            return
+
         message = str(self.assistant_state.get("message") or self.message_for_state(state_name))
         pill_w = max(190, min(330, len(message) * 8 + 86))
         pill_h = 48
@@ -426,6 +423,19 @@ class IdleScreen:
         self.canvas.create_oval(x1 + 16, y1 + 18, x1 + 28, y1 + 30, fill=color, outline="")
         self.canvas.create_text(x1 + 42, y1 + 10, text=state_name.upper(), anchor="nw", fill=color, font=self.label_font)
         self.canvas.create_text(x1 + 42, y1 + 27, text=message, anchor="nw", fill=self.fg, font=self.status_font)
+
+    def _draw_muted_icon(self, width: int, margin: int) -> None:
+        size = 42
+        x = width - margin - size
+        y = margin
+        self._rounded_rect(x, y, x + size, y + size, radius=15, fill="#210d14", outline="#5b2630")
+        cx = x + size / 2
+        cy = y + size / 2
+        self.canvas.create_oval(cx - 7, cy - 11, cx + 7, cy + 8, fill=self.danger, outline="")
+        self.canvas.create_rectangle(cx - 5, cy - 2, cx + 5, cy + 10, fill=self.danger, outline="")
+        self.canvas.create_line(cx, cy + 10, cx, cy + 16, fill=self.danger, width=3)
+        self.canvas.create_line(cx - 9, cy + 16, cx + 9, cy + 16, fill=self.danger, width=3)
+        self.canvas.create_line(x + 10, y + 32, x + 32, y + 10, fill="#ffd4db", width=4)
 
     def _rounded_rect(self, x1: float, y1: float, x2: float, y2: float, *, radius: int, fill: str, outline: str) -> None:
         points = [
@@ -469,7 +479,7 @@ class IdleScreen:
             {
                 "latitude": self.config["latitude"],
                 "longitude": self.config["longitude"],
-                "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
+                "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m",
                 "temperature_unit": self.config["temperatureUnit"],
                 "wind_speed_unit": self.config["windSpeedUnit"],
                 "timezone": "auto",
@@ -482,6 +492,17 @@ class IdleScreen:
             current = data["current"]
             units = data.get("current_units", {})
             condition, icon = WEATHER_CODES.get(int(current["weather_code"]), ("Current weather", "cloud"))
+            temp_unit = self._clean_temp_unit(str(units.get("temperature_2m", "°F")))
+            wind_unit = self._clean_wind_unit(str(units.get("wind_speed_10m", "mph")))
+            wind_direction = self._cardinal_direction(current.get("wind_direction_10m"))
+            wind_label = " ".join(
+                part for part in (
+                    wind_direction,
+                    round_number(current.get("wind_speed_10m")),
+                    wind_unit,
+                )
+                if part
+            )
             self.weather_queue.put(
                 {
                     "icon": icon,
@@ -490,8 +511,8 @@ class IdleScreen:
                     "details": (
                         f"{self.config['weatherLocation']}  |  "
                         f"Feels like {round_number(current.get('apparent_temperature'))}"
-                        f"{units.get('temperature_2m', '')}  |  "
-                        f"Wind {round_number(current.get('wind_speed_10m'))} {units.get('wind_speed_10m', '')}"
+                        f"{temp_unit}  |  "
+                        f"Wind {wind_label}"
                     ),
                 }
             )
@@ -537,9 +558,26 @@ class IdleScreen:
             "listening": "Listening",
             "processing": "Thinking",
             "responding": "Speaking",
-            "muted": "Microphone muted",
+            "muted": "Muted",
             "error": "Assistant needs attention",
         }.get(state, "Ready")
+
+    @staticmethod
+    def _clean_temp_unit(unit: str) -> str:
+        return unit.replace("°", "°").replace("deg", "°") or "°F"
+
+    @staticmethod
+    def _clean_wind_unit(unit: str) -> str:
+        return "mph" if unit.strip().lower() in {"mp/h", "mph"} else unit.strip()
+
+    @staticmethod
+    def _cardinal_direction(degrees: Any) -> str:
+        try:
+            value = float(degrees) % 360
+        except (TypeError, ValueError):
+            return ""
+        directions = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        return directions[int((value + 22.5) // 45) % 8]
 
 
 def main() -> None:

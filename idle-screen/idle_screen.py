@@ -15,6 +15,8 @@ from tkinter import font as tkfont
 from typing import Any
 
 
+APP_VERSION = "idle-v3"
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
     "latitude": 40.7128,
@@ -206,20 +208,21 @@ class IdleScreen:
         self._draw_header(margin)
         self._draw_clock(width, height, margin)
         self._draw_weather(width, height, margin)
+        self._draw_version(width, height)
 
         state_name = str(self.assistant_state.get("state", "idle")).lower()
         if state_name != "idle":
             self._draw_status(width, margin, state_name)
 
     def _draw_background(self, width: int, height: int, frame: int) -> None:
-        bands = 30
+        bands = 34
         band_h = max(1, math.ceil(height / bands))
         for index in range(bands):
             ratio = index / max(bands - 1, 1)
-            drift = (math.sin(frame * 0.018 + index * 0.42) + 1) / 2
-            r = int(5 + 5 * ratio + 2 * drift)
-            g = int(9 + 9 * ratio + 4 * drift)
-            b = int(14 + 14 * ratio + 8 * drift)
+            drift = (math.sin(frame * 0.012 + index * 0.28) + 1) / 2
+            r = int(4 + 4 * ratio + 1 * drift)
+            g = int(8 + 10 * ratio + 3 * drift)
+            b = int(14 + 18 * ratio + 5 * drift)
             y1 = index * band_h
             self.canvas.create_rectangle(0, y1, width, min(height, y1 + band_h), fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
 
@@ -229,34 +232,34 @@ class IdleScreen:
         self.canvas.create_line(0, height - 1, width, height - 1, fill="#102633")
 
     def _draw_aurora(self, width: int, height: int, frame: int) -> None:
-        for layer, color in enumerate(("#0c2b36", "#102b42", "#0b2432")):
-            base_y = height * (0.16 + layer * 0.11)
-            amplitude = height * (0.035 + layer * 0.012)
-            phase = frame * (0.018 + layer * 0.005)
+        for layer, color in enumerate(("#0b2631", "#0d3144", "#08202e")):
+            base_y = height * (0.18 + layer * 0.105)
+            amplitude = height * (0.026 + layer * 0.01)
+            phase = frame * (0.014 + layer * 0.004)
             points: list[float] = []
-            for i in range(9):
-                x = width * i / 8
-                y = base_y + math.sin(i * 0.95 + phase) * amplitude
+            for i in range(10):
+                x = width * i / 9
+                y = base_y + math.sin(i * 0.82 + phase) * amplitude
                 points.extend([x, y])
-            self.canvas.create_line(points, fill=color, width=max(18, int(height * 0.055)), smooth=True, splinesteps=24)
+            self.canvas.create_line(points, fill=color, width=max(12, int(height * 0.038)), smooth=True, splinesteps=24)
 
-        sweep_x = (frame * 0.7) % (width + 260) - 130
+        sweep_x = (frame * 0.45) % (width + 260) - 130
         self.canvas.create_line(
             sweep_x,
-            height * 0.06,
-            sweep_x + width * 0.34,
-            height * 0.82,
-            fill="#123140",
-            width=max(10, int(height * 0.022)),
+            height * 0.02,
+            sweep_x + width * 0.28,
+            height * 0.78,
+            fill="#102b39",
+            width=max(7, int(height * 0.016)),
             smooth=True,
         )
 
     def _draw_stars(self, width: int, height: int, frame: int) -> None:
-        for index in range(18):
-            x = (index * 97 + frame * (0.18 + index % 3 * 0.05)) % width
+        for index in range(12):
+            x = (index * 137 + frame * (0.12 + index % 3 * 0.03)) % width
             y = 35 + ((index * 53) % max(80, int(height * 0.55)))
             pulse = (math.sin(frame * 0.055 + index) + 1) / 2
-            color = "#1b4151" if pulse < 0.55 else "#24586b"
+            color = "#173849" if pulse < 0.65 else "#24586b"
             radius = 1 if index % 4 else 2
             self.canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill=color, outline="")
 
@@ -272,9 +275,19 @@ class IdleScreen:
         self.canvas.create_text(
             margin,
             margin + 25,
-            text="idle",
+            text="waiting for activity",
             anchor="nw",
             fill=self.subtle,
+            font=self.small_font,
+        )
+
+    def _draw_version(self, width: int, height: int) -> None:
+        self.canvas.create_text(
+            width - 10,
+            height - 8,
+            text=APP_VERSION,
+            anchor="se",
+            fill="#314554",
             font=self.small_font,
         )
 

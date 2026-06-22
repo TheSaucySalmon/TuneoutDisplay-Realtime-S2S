@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v5"
+APP_VERSION = "idle-v6"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -425,17 +425,29 @@ class IdleScreen:
         self.canvas.create_text(x1 + 42, y1 + 27, text=message, anchor="nw", fill=self.fg, font=self.status_font)
 
     def _draw_muted_icon(self, width: int, margin: int) -> None:
-        size = 42
+        size = 58
         x = width - margin - size
-        y = margin
-        self._rounded_rect(x, y, x + size, y + size, radius=15, fill="#210d14", outline="#5b2630")
+        y = margin - 2
         cx = x + size / 2
-        cy = y + size / 2
-        self.canvas.create_oval(cx - 7, cy - 11, cx + 7, cy + 8, fill=self.danger, outline="")
-        self.canvas.create_rectangle(cx - 5, cy - 2, cx + 5, cy + 10, fill=self.danger, outline="")
-        self.canvas.create_line(cx, cy + 10, cx, cy + 16, fill=self.danger, width=3)
-        self.canvas.create_line(cx - 9, cy + 16, cx + 9, cy + 16, fill=self.danger, width=3)
-        self.canvas.create_line(x + 10, y + 32, x + 32, y + 10, fill="#ffd4db", width=4)
+        top = y + 8
+        body_w = size * 0.36
+        body_h = size * 0.54
+        body_x1 = cx - body_w / 2
+        body_x2 = cx + body_w / 2
+        body_y1 = top
+        body_y2 = top + body_h
+
+        self._rounded_rect(body_x1, body_y1, body_x2, body_y2, radius=int(body_w / 2), fill=self.danger, outline=self.danger)
+
+        arc_x1 = cx - size * 0.34
+        arc_y1 = top + size * 0.14
+        arc_x2 = cx + size * 0.34
+        arc_y2 = top + size * 0.72
+        self.canvas.create_arc(arc_x1, arc_y1, arc_x2, arc_y2, start=200, extent=140, style=tk.ARC, outline=self.danger, width=5)
+        self.canvas.create_line(cx, top + size * 0.72, cx, top + size * 0.88, fill=self.danger, width=5)
+        self.canvas.create_line(cx - size * 0.22, top + size * 0.88, cx + size * 0.22, top + size * 0.88, fill=self.danger, width=7, capstyle=tk.ROUND)
+        self.canvas.create_line(x + 6, y + 9, x + size - 6, y + size - 5, fill=self.danger, width=7, capstyle=tk.ROUND)
+        self.canvas.create_line(x + 11, y + 8, x + size - 10, y + size - 9, fill="#061018", width=2, capstyle=tk.ROUND)
 
     def _rounded_rect(self, x1: float, y1: float, x2: float, y2: float, *, radius: int, fill: str, outline: str) -> None:
         points = [

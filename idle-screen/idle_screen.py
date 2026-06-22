@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v3"
+APP_VERSION = "idle-v4"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -122,9 +122,15 @@ class IdleScreen:
 
         fullscreen = bool(config.get("fullscreen", True))
         if fullscreen:
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
             self.root.overrideredirect(True)
+            self.root.geometry(f"{screen_w}x{screen_h}+0+0")
+            self.root.minsize(screen_w, screen_h)
             self.root.attributes("-fullscreen", True)
             self.root.attributes("-topmost", True)
+            self.root.after(100, self.force_fullscreen)
+            self.root.after(750, self.force_fullscreen)
         else:
             self.root.geometry("800x480")
 
@@ -139,6 +145,19 @@ class IdleScreen:
         self.drain_weather_queue()
         self.fade_in()
         self.animate()
+
+    def force_fullscreen(self) -> None:
+        if self._closing or not bool(self.config.get("fullscreen", True)):
+            return
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        self.root.geometry(f"{screen_w}x{screen_h}+0+0")
+        self.root.attributes("-fullscreen", True)
+        self.root.attributes("-topmost", True)
+        self.root.lift()
+        self.root.focus_force()
+        self.canvas.configure(width=screen_w, height=screen_h)
+        self.draw()
 
     def build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)

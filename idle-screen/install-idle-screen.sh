@@ -126,6 +126,7 @@ EOF
 fi
 
 echo "Installed Smart Display Idle Screen."
+grep "APP_VERSION" "$APP_DIR/idle_screen.py" || true
 echo "Config: $CONFIG_DIR/config.json"
 echo "Autostart: $AUTOSTART_DIR/smart-display-idle.desktop and $LABWC_DIR/autostart"
 echo "Idle watcher: $CONFIG_DIR/idle-watch.sh"

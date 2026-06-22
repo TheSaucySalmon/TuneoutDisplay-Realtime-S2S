@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v6"
+APP_VERSION = "idle-v7"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -262,17 +262,6 @@ class IdleScreen:
                 y = base_y + math.sin(i * 0.82 + phase) * amplitude
                 points.extend([x, y])
             self.canvas.create_line(points, fill=color, width=max(12, int(height * 0.038)), smooth=True, splinesteps=24)
-
-        sweep_x = (frame * 0.45) % (width + 260) - 130
-        self.canvas.create_line(
-            sweep_x,
-            height * 0.02,
-            sweep_x + width * 0.28,
-            height * 0.78,
-            fill="#102b39",
-            width=max(7, int(height * 0.016)),
-            smooth=True,
-        )
 
     def _draw_stars(self, width: int, height: int, frame: int) -> None:
         for index in range(12):

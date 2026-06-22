@@ -93,7 +93,6 @@ class IdleScreen:
         }
         self.assistant_state = {"state": "idle", "message": "Ready"}
         self.display_time = "--:--"
-        self.display_ampm = ""
         self.display_date = "Loading date"
         self._closing = False
 
@@ -145,14 +144,13 @@ class IdleScreen:
     def rebuild_fonts_and_draw(self) -> None:
         width = max(self.root.winfo_width(), self.root.winfo_screenwidth(), 800)
         height = max(self.root.winfo_height(), self.root.winfo_screenheight(), 480)
-        scale = max(0.82, min(width / 800, height / 480, 1.18))
+        scale = max(0.82, min(width / 800, height / 480, 1.0))
 
         self.label_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
-        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(110 * scale), weight="bold")
-        self.ampm_font = tkfont.Font(family="DejaVu Sans", size=int(30 * scale), weight="bold")
-        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(22 * scale))
-        self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(44 * scale), weight="bold")
-        self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(17 * scale), weight="bold")
+        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(84 * scale), weight="bold")
+        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(19 * scale))
+        self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(32 * scale), weight="bold")
+        self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(15 * scale), weight="bold")
         self.small_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale))
         self.status_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
         self.draw()
@@ -232,39 +230,33 @@ class IdleScreen:
         )
 
     def _draw_clock(self, width: int, height: int, margin: int) -> None:
-        y = int(height * 0.245)
+        y = int(height * 0.18)
+        time_font = self._fitted_font(self.time_font, self.display_time, width - margin * 2)
         time_id = self.canvas.create_text(
-            width / 2,
+            margin,
             y,
             text=self.display_time,
-            anchor="center",
+            anchor="nw",
             fill=self.fg,
-            font=self.time_font,
+            font=time_font,
         )
         bbox = self.canvas.bbox(time_id)
-        if bbox:
-            self.canvas.create_text(
-                min(width - margin, bbox[2] + 14),
-                bbox[1] + 25,
-                text=self.display_ampm,
-                anchor="nw",
-                fill=self.muted,
-                font=self.ampm_font,
-            )
+        date_y = bbox[3] + 4 if bbox else y + 92
 
         self.canvas.create_text(
-            width / 2,
-            y + int(height * 0.18),
+            margin + 4,
+            date_y,
             text=self.display_date,
-            anchor="center",
+            anchor="nw",
             fill=self.muted,
             font=self.date_font,
+            width=width - margin * 2,
         )
 
     def _draw_weather(self, width: int, height: int, margin: int) -> None:
-        card_w = min(width - margin * 2, 620)
-        card_h = min(138, max(118, int(height * 0.27)))
-        x1 = (width - card_w) / 2
+        card_w = width - margin * 2
+        card_h = min(124, max(108, int(height * 0.24)))
+        x1 = margin
         y1 = height - card_h - margin
         x2 = x1 + card_w
         y2 = y1 + card_h
@@ -272,32 +264,34 @@ class IdleScreen:
         self._rounded_rect(x1, y1, x2, y2, radius=20, fill=self.panel, outline=self.line)
         self.canvas.create_rectangle(x1 + 1, y1 + 1, x2 - 1, y1 + 7, fill=self.panel_2, outline="")
 
-        icon_size = min(86, card_h - 44)
-        icon_x = x1 + 28
+        icon_size = min(72, card_h - 36)
+        icon_x = x1 + 20
         icon_y = y1 + (card_h - icon_size) / 2
         self._draw_weather_icon(icon_x, icon_y, icon_size, self.weather_data["icon"])
 
-        text_x = icon_x + icon_size + 28
-        self.canvas.create_text(
+        text_x = icon_x + icon_size + 22
+        temp_id = self.canvas.create_text(
             text_x,
-            y1 + 22,
-            text=f"{self.weather_data['temp']}°",
+            y1 + 18,
+            text=f"{self.weather_data['temp']} deg",
             anchor="nw",
             fill=self.fg,
             font=self.temp_font,
         )
+        temp_bbox = self.canvas.bbox(temp_id)
+        condition_x = temp_bbox[2] + 18 if temp_bbox else text_x + 108
         self.canvas.create_text(
-            text_x,
-            y1 + 76,
+            condition_x,
+            y1 + 27,
             text=self.weather_data["condition"],
             anchor="nw",
             fill=self.fg,
             font=self.weather_font,
-            width=max(200, x2 - text_x - 22),
+            width=max(140, x2 - condition_x - 20),
         )
         self.canvas.create_text(
             text_x,
-            y1 + 103,
+            y1 + 72,
             text=self.weather_data["details"],
             anchor="nw",
             fill=self.muted,
@@ -360,15 +354,26 @@ class IdleScreen:
         ]
         self.canvas.create_polygon(points, smooth=True, splinesteps=16, fill=fill, outline=outline)
 
+    @staticmethod
+    def _fitted_font(source: tkfont.Font, text: str, max_width: int) -> tkfont.Font:
+        size = int(source.cget("size"))
+        fitted = tkfont.Font(
+            family=str(source.cget("family")),
+            size=size,
+            weight=str(source.cget("weight")),
+        )
+        while size > 24 and fitted.measure(text) > max_width:
+            size -= 4
+            fitted.configure(size=size)
+        return fitted
+
     def update_clock(self) -> None:
         now = datetime.now()
         time_format = str(self.config.get("timeFormat", "auto")).lower()
         if time_format == "24h":
             self.display_time = now.strftime("%H:%M")
-            self.display_ampm = ""
         else:
             self.display_time = now.strftime("%I:%M").lstrip("0")
-            self.display_ampm = now.strftime("%p")
         self.display_date = f"{now:%A}, {now:%B} {now.day}"
         self.draw()
         self.root.after(1000, self.update_clock)

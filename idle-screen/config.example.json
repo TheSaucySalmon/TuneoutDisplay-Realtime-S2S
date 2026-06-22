@@ -11,5 +11,7 @@
   "stateFile": "~/.smart-display-assistant/state.json",
   "fullscreen": true,
   "fadeInMs": 450,
-  "idleTimeoutSeconds": 60
+  "idleTimeoutSeconds": 60,
+  "animationFps": 24,
+  "animatedBackground": true
 }

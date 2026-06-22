@@ -28,6 +28,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stateFile": "~/.smart-display-assistant/state.json",
     "fullscreen": True,
     "fadeInMs": 450,
+    "animationFps": 24,
+    "animatedBackground": True,
 }
 
 WEATHER_CODES: dict[int, tuple[str, str]] = {
@@ -95,17 +97,19 @@ class IdleScreen:
         self.display_time = "--:--"
         self.display_date = "Loading date"
         self._closing = False
+        self._frame = 0
 
-        self.bg = "#060a0f"
-        self.bg_2 = "#0b121a"
-        self.panel = "#101922"
-        self.panel_2 = "#142331"
-        self.line = "#223445"
-        self.fg = "#f4f8fb"
-        self.muted = "#8fa3b4"
-        self.subtle = "#5f7486"
-        self.accent = "#6ed7e8"
-        self.warn = "#f2c56b"
+        self.bg = "#05080d"
+        self.bg_2 = "#07111a"
+        self.panel = "#0d1721"
+        self.panel_2 = "#101f2c"
+        self.line = "#1d3545"
+        self.fg = "#f3f8fb"
+        self.muted = "#9aabba"
+        self.subtle = "#66798a"
+        self.accent = "#7ae7f5"
+        self.accent_2 = "#315f73"
+        self.warn = "#f1c66f"
 
         self.root.title("Smart Display Idle")
         self.root.configure(bg=self.bg)
@@ -132,6 +136,7 @@ class IdleScreen:
         self.update_state()
         self.drain_weather_queue()
         self.fade_in()
+        self.animate()
 
     def build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -147,13 +152,22 @@ class IdleScreen:
         scale = max(0.82, min(width / 800, height / 480, 1.0))
 
         self.label_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
-        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(84 * scale), weight="bold")
-        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(19 * scale))
+        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(76 * scale), weight="bold")
+        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(18 * scale))
         self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(32 * scale), weight="bold")
         self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(15 * scale), weight="bold")
         self.small_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale))
         self.status_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
         self.draw()
+
+    def animate(self) -> None:
+        if self._closing:
+            return
+        if bool(self.config.get("animatedBackground", True)):
+            self._frame += 1
+            self.draw()
+        fps = max(8, min(30, int(self.config.get("animationFps", 24))))
+        self.root.after(int(1000 / fps), self.animate)
 
     def fade_in(self, step: int = 0) -> None:
         if not self._fade_steps:
@@ -188,7 +202,7 @@ class IdleScreen:
         margin = max(28, int(min(width, height) * 0.075))
         self.canvas.delete("all")
 
-        self._draw_background(width, height)
+        self._draw_background(width, height, self._frame)
         self._draw_header(margin)
         self._draw_clock(width, height, margin)
         self._draw_weather(width, height, margin)
@@ -197,19 +211,54 @@ class IdleScreen:
         if state_name != "idle":
             self._draw_status(width, margin, state_name)
 
-    def _draw_background(self, width: int, height: int) -> None:
-        bands = 36
+    def _draw_background(self, width: int, height: int, frame: int) -> None:
+        bands = 30
         band_h = max(1, math.ceil(height / bands))
         for index in range(bands):
             ratio = index / max(bands - 1, 1)
-            r = int(6 + 5 * ratio)
-            g = int(10 + 8 * ratio)
-            b = int(15 + 12 * ratio)
+            drift = (math.sin(frame * 0.018 + index * 0.42) + 1) / 2
+            r = int(5 + 5 * ratio + 2 * drift)
+            g = int(9 + 9 * ratio + 4 * drift)
+            b = int(14 + 14 * ratio + 8 * drift)
             y1 = index * band_h
             self.canvas.create_rectangle(0, y1, width, min(height, y1 + band_h), fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
 
-        self.canvas.create_rectangle(0, 0, width, height, outline="#0d1720", width=2)
-        self.canvas.create_line(0, height - 1, width, height - 1, fill="#0f2430")
+        self._draw_aurora(width, height, frame)
+        self._draw_stars(width, height, frame)
+        self.canvas.create_rectangle(0, 0, width, height, outline="#0a141d", width=2)
+        self.canvas.create_line(0, height - 1, width, height - 1, fill="#102633")
+
+    def _draw_aurora(self, width: int, height: int, frame: int) -> None:
+        for layer, color in enumerate(("#0c2b36", "#102b42", "#0b2432")):
+            base_y = height * (0.16 + layer * 0.11)
+            amplitude = height * (0.035 + layer * 0.012)
+            phase = frame * (0.018 + layer * 0.005)
+            points: list[float] = []
+            for i in range(9):
+                x = width * i / 8
+                y = base_y + math.sin(i * 0.95 + phase) * amplitude
+                points.extend([x, y])
+            self.canvas.create_line(points, fill=color, width=max(18, int(height * 0.055)), smooth=True, splinesteps=24)
+
+        sweep_x = (frame * 0.7) % (width + 260) - 130
+        self.canvas.create_line(
+            sweep_x,
+            height * 0.06,
+            sweep_x + width * 0.34,
+            height * 0.82,
+            fill="#123140",
+            width=max(10, int(height * 0.022)),
+            smooth=True,
+        )
+
+    def _draw_stars(self, width: int, height: int, frame: int) -> None:
+        for index in range(18):
+            x = (index * 97 + frame * (0.18 + index % 3 * 0.05)) % width
+            y = 35 + ((index * 53) % max(80, int(height * 0.55)))
+            pulse = (math.sin(frame * 0.055 + index) + 1) / 2
+            color = "#1b4151" if pulse < 0.55 else "#24586b"
+            radius = 1 if index % 4 else 2
+            self.canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill=color, outline="")
 
     def _draw_header(self, margin: int) -> None:
         self.canvas.create_text(
@@ -223,14 +272,14 @@ class IdleScreen:
         self.canvas.create_text(
             margin,
             margin + 25,
-            text="Idle",
+            text="idle",
             anchor="nw",
             fill=self.subtle,
             font=self.small_font,
         )
 
     def _draw_clock(self, width: int, height: int, margin: int) -> None:
-        y = int(height * 0.18)
+        y = int(height * 0.19)
         time_font = self._fitted_font(self.time_font, self.display_time, width - margin * 2)
         time_id = self.canvas.create_text(
             margin,
@@ -241,7 +290,7 @@ class IdleScreen:
             font=time_font,
         )
         bbox = self.canvas.bbox(time_id)
-        date_y = bbox[3] + 4 if bbox else y + 92
+        date_y = bbox[3] + 2 if bbox else y + 84
 
         self.canvas.create_text(
             margin + 4,
@@ -255,34 +304,34 @@ class IdleScreen:
 
     def _draw_weather(self, width: int, height: int, margin: int) -> None:
         card_w = width - margin * 2
-        card_h = min(124, max(108, int(height * 0.24)))
+        card_h = min(118, max(104, int(height * 0.23)))
         x1 = margin
         y1 = height - card_h - margin
         x2 = x1 + card_w
         y2 = y1 + card_h
 
-        self._rounded_rect(x1, y1, x2, y2, radius=20, fill=self.panel, outline=self.line)
-        self.canvas.create_rectangle(x1 + 1, y1 + 1, x2 - 1, y1 + 7, fill=self.panel_2, outline="")
+        self._rounded_rect(x1, y1, x2, y2, radius=18, fill=self.panel, outline=self.line)
+        self.canvas.create_line(x1 + 22, y1 + 1, x2 - 22, y1 + 1, fill="#214050", width=1)
 
-        icon_size = min(72, card_h - 36)
+        icon_size = min(66, card_h - 34)
         icon_x = x1 + 20
         icon_y = y1 + (card_h - icon_size) / 2
         self._draw_weather_icon(icon_x, icon_y, icon_size, self.weather_data["icon"])
 
-        text_x = icon_x + icon_size + 22
+        text_x = icon_x + icon_size + 20
         temp_id = self.canvas.create_text(
             text_x,
-            y1 + 18,
+            y1 + 17,
             text=f"{self.weather_data['temp']} deg",
             anchor="nw",
             fill=self.fg,
             font=self.temp_font,
         )
         temp_bbox = self.canvas.bbox(temp_id)
-        condition_x = temp_bbox[2] + 18 if temp_bbox else text_x + 108
+        condition_x = temp_bbox[2] + 16 if temp_bbox else text_x + 104
         self.canvas.create_text(
             condition_x,
-            y1 + 27,
+            y1 + 26,
             text=self.weather_data["condition"],
             anchor="nw",
             fill=self.fg,
@@ -291,7 +340,7 @@ class IdleScreen:
         )
         self.canvas.create_text(
             text_x,
-            y1 + 72,
+            y1 + 70,
             text=self.weather_data["details"],
             anchor="nw",
             fill=self.muted,

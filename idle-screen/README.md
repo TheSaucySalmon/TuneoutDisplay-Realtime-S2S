@@ -3,7 +3,7 @@
 Standalone native idle screen for Raspberry Pi OS. It is intentionally not tied
 to Home Assistant and does not use Chromium. It runs as a Pi OS idle overlay:
 after inactivity it fades into a fullscreen Python/Tkinter screen with the
-current time, date, and weather.
+current time, date, weather, and a lightweight animated background.
 
 The weather source is [Open-Meteo](https://open-meteo.com/), so no API key is
 required. You only need latitude and longitude.
@@ -44,6 +44,17 @@ The installer creates:
 
 On the next desktop login, Pi OS starts the idle watcher. The watcher launches
 the screen after `idleTimeoutSeconds` and hides it again when activity resumes.
+
+Animation can be tuned in `~/.config/smart-display-idle/config.json`:
+
+```json
+{
+  "animationFps": 24,
+  "animatedBackground": true
+}
+```
+
+Set `animatedBackground` to `false` if you want the lowest possible CPU use.
 
 ## Assistant / Hermes Hook
 

@@ -1,0 +1,13 @@
+{
+  "displayName": "Kitchen",
+  "latitude": 40.7128,
+  "longitude": -74.006,
+  "weatherLocation": "New York",
+  "temperatureUnit": "fahrenheit",
+  "windSpeedUnit": "mph",
+  "timeFormat": "auto",
+  "refreshMinutes": 10,
+  "statePollSeconds": 2,
+  "stateFile": "~/.config/smart-display-idle/state.json",
+  "fullscreen": true
+}

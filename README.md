@@ -43,6 +43,7 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 ## Features
 
 - **HA Lovelace kiosk** - Chromium in kiosk mode, launches automatically after boot and waits for HA to be reachable before opening
+- **Standalone Pi OS idle screen** - optional native Python screen with local time, date, and Open-Meteo weather, without requiring Home Assistant
 - **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
 - **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
 - **Home Assistant voice control path** - Realtime can call HA services for entities, scenes, scripts, and helpers
@@ -68,6 +69,11 @@ README.md                       # Main project documentation
 ha-configuration.md             # Home Assistant setup / Lovelace notes
 OPENAI-REALTIME.md              # Realtime implementation notes
 LICENSE.txt                     # License
+
+idle-screen/
+  idle_screen.py                # Native Pi OS idle screen script
+  install-idle-screen.sh        # Pi desktop autostart installer
+  README.md                     # Idle screen setup notes
 
 assistant/
   assistant_service.py          # Main assistant runtime service
@@ -364,6 +370,23 @@ sudo reboot
 - Check credentials in `/etc/smart-display/mqtt.env`
 - Verify MQTT discovery is enabled in HA's MQTT integration settings
 - Check `journalctl -u smart-display-mqtt -f` for connection errors
+
+**Home Assistant gets slow only when the Pi is on**
+- First stop the HA kiosk/browser if it is still enabled. A live camera card can keep a stream open through HA the whole time the Pi is awake.
+- Then test services one at a time:
+
+```bash
+sudo systemctl stop smart-display-assistant
+sudo systemctl stop smart-display-mqtt
+```
+
+If HA immediately recovers after stopping `smart-display-assistant`, check:
+
+```bash
+sudo journalctl -u smart-display-assistant -n 100 --no-pager
+```
+
+Repeated `api-key-missing`, `websocket-client-missing`, or OpenWakeWord startup errors mean the Pi was retrying assistant work in the background. The runtime now deduplicates repeated MQTT state publishes and backs off failed wake-word starts.
 
 **Assistant state shows unavailable / card says Unknown**
 - Check `sudo systemctl status smart-display-assistant --no-pager`

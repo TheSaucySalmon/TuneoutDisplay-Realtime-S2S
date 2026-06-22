@@ -38,6 +38,8 @@ class AssistantRuntimeService:
         self.realtime_session = RealtimeSessionController(self.realtime_client)
         self._audio_status: AudioStatus | None = None
         self._last_audio_probe = 0.0
+        self._last_wakeword_start_attempt = 0.0
+        self._last_logged_wakeword_status = ""
         self._realtime_status = "idle"
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -52,6 +54,8 @@ class AssistantRuntimeService:
         self.client.will_set(config.availability_topic, "offline", retain=True)
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self._stop_event = threading.Event()
+        self._last_published_state: tuple[str, bool, str] | None = None
+        self._last_published_audio_status: AudioStatus | None = None
 
     def discovery_topics(self) -> list[tuple[str, dict[str, object]]]:
         device = {
@@ -245,20 +249,29 @@ class AssistantRuntimeService:
             ),
         ]
 
-    def publish_state(self) -> None:
+    def publish_state(self, force: bool = False) -> None:
         state = self.state_store.current_state()
         muted = self.state_store.is_muted()
+        snapshot = (state, muted, self._realtime_status)
+        if not force and snapshot == self._last_published_state:
+            return
+
         self.client.publish(self.config.state_topic, state, retain=True)
         self.client.publish(self.config.mute_state_topic, "ON" if muted else "OFF", retain=True)
         self.client.publish(self.config.realtime_status_topic, self._realtime_status, retain=True)
+        self._last_published_state = snapshot
 
-    def publish_audio_status(self, status: AudioStatus) -> None:
+    def publish_audio_status(self, status: AudioStatus, force: bool = False) -> None:
+        if not force and status == self._last_published_audio_status:
+            return
+
         self.client.publish(self.config.audio_profile_topic, status.profile, retain=True)
         self.client.publish(self.config.audio_input_topic, status.input_device, retain=True)
         self.client.publish(self.config.audio_output_topic, status.output_device, retain=True)
         self.client.publish(self.config.audio_status_topic, status.details, retain=True)
         self.client.publish(self.config.audio_input_ready_topic, "ON" if status.input_ready else "OFF", retain=True)
         self.client.publish(self.config.audio_output_ready_topic, "ON" if status.output_ready else "OFF", retain=True)
+        self._last_published_audio_status = status
 
     def publish_memory_snapshot(self) -> None:
         self.client.publish(
@@ -275,14 +288,16 @@ class AssistantRuntimeService:
         status = self.audio_manager.probe()
         self._audio_status = status
         self._last_audio_probe = now
-        self.publish_audio_status(status)
-        logging.info(
-            "Audio profile=%s input=%s output=%s details=%s",
-            status.profile,
-            status.input_device,
-            status.output_device,
-            status.details,
-        )
+        previous = self._last_published_audio_status
+        self.publish_audio_status(status, force=force)
+        if force or status != previous:
+            logging.info(
+                "Audio profile=%s input=%s output=%s details=%s",
+                status.profile,
+                status.input_device,
+                status.output_device,
+                status.details,
+            )
         return status
 
     def on_connect(self, client, userdata, connect_flags, reason_code, properties) -> None:
@@ -297,7 +312,7 @@ class AssistantRuntimeService:
         client.subscribe(self.config.mute_command_topic)
         client.subscribe(self.config.realtime_trigger_topic)
         client.subscribe(self.config.memory_sync_topic)
-        self.publish_state()
+        self.publish_state(force=True)
         self.refresh_audio_status(force=True)
 
     def on_message(self, client, userdata, msg) -> None:
@@ -488,8 +503,14 @@ class AssistantRuntimeService:
     def _start_wakeword_detector(self) -> None:
         if not self.config.assistant_enabled or self.state_store.is_muted() or self.realtime_session.active():
             return
+        now = time.time()
+        if not self.wakeword_detector.active() and (now - self._last_wakeword_start_attempt) < 30:
+            return
+        self._last_wakeword_start_attempt = now
         self.wakeword_detector.start()
-        logging.info("OWW status: %s", self.wakeword_detector.status)
+        if self.wakeword_detector.status != self._last_logged_wakeword_status:
+            logging.info("OWW status: %s", self.wakeword_detector.status)
+            self._last_logged_wakeword_status = self.wakeword_detector.status
 
     def _ensure_wakeword_detector(self) -> None:
         if self.wakeword_detector.active():
@@ -498,6 +519,7 @@ class AssistantRuntimeService:
 
     def _stop_wakeword_detector(self) -> None:
         self.wakeword_detector.stop()
+        self._last_wakeword_start_attempt = 0.0
         logging.info("OWW detector stopped.")
 
     def _play_wake_ack(self) -> None:

@@ -86,7 +86,7 @@ views:
               source: true
           - show_state: false
             show_name: true
-            camera_view: live
+            camera_view: auto
             fit_mode: cover
             type: picture-entity
             entity: camera.front_doorbell_high_resolution_channel

@@ -6,7 +6,6 @@ import json
 import math
 import queue
 import threading
-import time
 import tkinter as tk
 import urllib.parse
 import urllib.request
@@ -26,39 +25,40 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "timeFormat": "auto",
     "refreshMinutes": 10,
     "statePollSeconds": 2,
-    "stateFile": "~/.config/smart-display-idle/state.json",
+    "stateFile": "~/.smart-display-assistant/state.json",
     "fullscreen": True,
+    "fadeInMs": 450,
 }
 
 WEATHER_CODES: dict[int, tuple[str, str]] = {
-    0: ("Clear", "☀"),
-    1: ("Mostly clear", "☀"),
-    2: ("Partly cloudy", "⛅"),
-    3: ("Cloudy", "☁"),
-    45: ("Fog", "≋"),
-    48: ("Freezing fog", "≋"),
-    51: ("Light drizzle", "☔"),
-    53: ("Drizzle", "☔"),
-    55: ("Heavy drizzle", "☔"),
-    56: ("Freezing drizzle", "☔"),
-    57: ("Freezing drizzle", "☔"),
-    61: ("Light rain", "☔"),
-    63: ("Rain", "☔"),
-    65: ("Heavy rain", "☔"),
-    66: ("Freezing rain", "☔"),
-    67: ("Freezing rain", "☔"),
-    71: ("Light snow", "❄"),
-    73: ("Snow", "❄"),
-    75: ("Heavy snow", "❄"),
-    77: ("Snow grains", "❄"),
-    80: ("Rain showers", "☔"),
-    81: ("Rain showers", "☔"),
-    82: ("Heavy showers", "☔"),
-    85: ("Snow showers", "❄"),
-    86: ("Snow showers", "❄"),
-    95: ("Thunderstorms", "⚡"),
-    96: ("Thunderstorms", "⚡"),
-    99: ("Thunderstorms", "⚡"),
+    0: ("Clear", "sun"),
+    1: ("Mostly clear", "sun"),
+    2: ("Partly cloudy", "partly"),
+    3: ("Cloudy", "cloud"),
+    45: ("Fog", "fog"),
+    48: ("Freezing fog", "fog"),
+    51: ("Light drizzle", "rain"),
+    53: ("Drizzle", "rain"),
+    55: ("Heavy drizzle", "rain"),
+    56: ("Freezing drizzle", "rain"),
+    57: ("Freezing drizzle", "rain"),
+    61: ("Light rain", "rain"),
+    63: ("Rain", "rain"),
+    65: ("Heavy rain", "rain"),
+    66: ("Freezing rain", "rain"),
+    67: ("Freezing rain", "rain"),
+    71: ("Light snow", "snow"),
+    73: ("Snow", "snow"),
+    75: ("Heavy snow", "snow"),
+    77: ("Snow grains", "snow"),
+    80: ("Rain showers", "rain"),
+    81: ("Rain showers", "rain"),
+    82: ("Heavy showers", "rain"),
+    85: ("Snow showers", "snow"),
+    86: ("Snow showers", "snow"),
+    95: ("Thunderstorms", "storm"),
+    96: ("Thunderstorms", "storm"),
+    99: ("Thunderstorms", "storm"),
 }
 
 
@@ -85,53 +85,101 @@ class IdleScreen:
         self.config = config
         self.weather_queue: queue.Queue[dict[str, str]] = queue.Queue()
         self.state_path = Path(str(config["stateFile"])).expanduser()
+        self.weather_data = {
+            "icon": "cloud",
+            "temp": "--",
+            "condition": "Loading weather",
+            "details": "Checking local forecast",
+        }
+        self.assistant_state = {"state": "idle", "message": "Ready"}
+        self.display_time = "--:--"
+        self.display_ampm = ""
+        self.display_date = "Loading date"
+        self._closing = False
 
-        self.bg = "#071014"
-        self.panel = "#0b2028"
-        self.fg = "#f5fbff"
-        self.muted = "#aac0c9"
-        self.accent = "#7bdff2"
-        self.warn = "#ffcf70"
+        self.bg = "#060a0f"
+        self.bg_2 = "#0b121a"
+        self.panel = "#101922"
+        self.panel_2 = "#142331"
+        self.line = "#223445"
+        self.fg = "#f4f8fb"
+        self.muted = "#8fa3b4"
+        self.subtle = "#5f7486"
+        self.accent = "#6ed7e8"
+        self.warn = "#f2c56b"
 
-        self.root.title("Smart Display Idle Screen")
+        self.root.title("Smart Display Idle")
         self.root.configure(bg=self.bg)
         self.root.bind("<Escape>", lambda _event: self.root.destroy())
         self.root.bind("q", lambda _event: self.root.destroy())
-        self.root.attributes("-fullscreen", bool(config.get("fullscreen", True)))
+        self.root.bind("<ButtonPress>", lambda _event: self.root.destroy())
+        self.root.bind("<KeyPress>", lambda _event: self.root.destroy())
 
-        self.weather_data = {
-            "mark": "--",
-            "temp": "--°",
-            "condition": "Loading weather",
-            "details": "Checking local forecast...",
-        }
-        self.assistant_state = {"state": "idle", "message": "Ready"}
+        fullscreen = bool(config.get("fullscreen", True))
+        if fullscreen:
+            self.root.overrideredirect(True)
+            self.root.attributes("-fullscreen", True)
+            self.root.attributes("-topmost", True)
+        else:
+            self.root.geometry("800x480")
+
+        self._fade_steps = max(0, int(config.get("fadeInMs", 450)) // 30)
+        if self._fade_steps:
+            self.root.attributes("-alpha", 0.0)
 
         self.build_ui()
         self.update_clock()
         self.schedule_weather()
         self.update_state()
         self.drain_weather_queue()
+        self.fade_in()
 
     def build_ui(self) -> None:
-        width = max(self.root.winfo_screenwidth(), 800)
-        scale = width / 800
-
-        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(112 * scale), weight="bold")
-        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(19 * scale))
-        self.label_font = tkfont.Font(family="DejaVu Sans", size=int(11 * scale), weight="bold")
-        self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(46 * scale), weight="bold")
-        self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(18 * scale), weight="bold")
-        self.small_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale))
-        self.mark_font = tkfont.Font(family="DejaVu Sans", size=int(54 * scale), weight="bold")
-        self.status_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
-
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-
         self.canvas = tk.Canvas(self.root, bg=self.bg, highlightthickness=0, bd=0)
         self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.canvas.bind("<Configure>", lambda _event: self.draw())
+        self.canvas.bind("<Configure>", lambda _event: self.rebuild_fonts_and_draw())
+        self.rebuild_fonts_and_draw()
+
+    def rebuild_fonts_and_draw(self) -> None:
+        width = max(self.root.winfo_width(), self.root.winfo_screenwidth(), 800)
+        height = max(self.root.winfo_height(), self.root.winfo_screenheight(), 480)
+        scale = max(0.82, min(width / 800, height / 480, 1.18))
+
+        self.label_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
+        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(110 * scale), weight="bold")
+        self.ampm_font = tkfont.Font(family="DejaVu Sans", size=int(30 * scale), weight="bold")
+        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(22 * scale))
+        self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(44 * scale), weight="bold")
+        self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(17 * scale), weight="bold")
+        self.small_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale))
+        self.status_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
+        self.draw()
+
+    def fade_in(self, step: int = 0) -> None:
+        if not self._fade_steps:
+            return
+        alpha = min(1.0, step / self._fade_steps)
+        self.root.attributes("-alpha", alpha)
+        if alpha < 1.0:
+            self.root.after(30, lambda: self.fade_in(step + 1))
+
+    def fade_out_and_close(self, step: int | None = None) -> None:
+        if self._closing and step is None:
+            return
+        self._closing = True
+        if not self._fade_steps:
+            self.root.destroy()
+            return
+
+        step = self._fade_steps if step is None else step
+        alpha = max(0.0, step / self._fade_steps)
+        self.root.attributes("-alpha", alpha)
+        if alpha <= 0.0:
+            self.root.destroy()
+            return
+        self.root.after(24, lambda: self.fade_out_and_close(step - 1))
 
     def draw(self) -> None:
         if not hasattr(self, "canvas"):
@@ -139,12 +187,33 @@ class IdleScreen:
 
         width = max(self.canvas.winfo_width(), 1)
         height = max(self.canvas.winfo_height(), 1)
-        margin = max(28, int(width * 0.045))
-        bottom_margin = max(24, int(height * 0.055))
-
+        margin = max(28, int(min(width, height) * 0.075))
         self.canvas.delete("all")
-        self._draw_background(width, height)
 
+        self._draw_background(width, height)
+        self._draw_header(margin)
+        self._draw_clock(width, height, margin)
+        self._draw_weather(width, height, margin)
+
+        state_name = str(self.assistant_state.get("state", "idle")).lower()
+        if state_name != "idle":
+            self._draw_status(width, margin, state_name)
+
+    def _draw_background(self, width: int, height: int) -> None:
+        bands = 36
+        band_h = max(1, math.ceil(height / bands))
+        for index in range(bands):
+            ratio = index / max(bands - 1, 1)
+            r = int(6 + 5 * ratio)
+            g = int(10 + 8 * ratio)
+            b = int(15 + 12 * ratio)
+            y1 = index * band_h
+            self.canvas.create_rectangle(0, y1, width, min(height, y1 + band_h), fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
+
+        self.canvas.create_rectangle(0, 0, width, height, outline="#0d1720", width=2)
+        self.canvas.create_line(0, height - 1, width, height - 1, fill="#0f2430")
+
+    def _draw_header(self, margin: int) -> None:
         self.canvas.create_text(
             margin,
             margin,
@@ -153,175 +222,141 @@ class IdleScreen:
             fill=self.accent,
             font=self.label_font,
         )
-
         self.canvas.create_text(
             margin,
-            margin + 30,
-            text=getattr(self, "display_time", "--:--"),
+            margin + 25,
+            text="Idle",
             anchor="nw",
+            fill=self.subtle,
+            font=self.small_font,
+        )
+
+    def _draw_clock(self, width: int, height: int, margin: int) -> None:
+        y = int(height * 0.245)
+        time_id = self.canvas.create_text(
+            width / 2,
+            y,
+            text=self.display_time,
+            anchor="center",
             fill=self.fg,
             font=self.time_font,
         )
+        bbox = self.canvas.bbox(time_id)
+        if bbox:
+            self.canvas.create_text(
+                min(width - margin, bbox[2] + 14),
+                bbox[1] + 25,
+                text=self.display_ampm,
+                anchor="nw",
+                fill=self.muted,
+                font=self.ampm_font,
+            )
 
         self.canvas.create_text(
-            margin + 5,
-            margin + int(height * 0.285),
-            text=getattr(self, "display_date", "Loading date"),
-            anchor="nw",
+            width / 2,
+            y + int(height * 0.18),
+            text=self.display_date,
+            anchor="center",
             fill=self.muted,
             font=self.date_font,
         )
 
-        weather_w = min(width - (margin * 2), int(width * 0.78))
-        weather_h = max(148, int(height * 0.24))
-        weather_x = margin
-        weather_y = height - weather_h - bottom_margin
-        self._rounded_rect(
-            weather_x,
-            weather_y,
-            weather_x + weather_w,
-            weather_y + weather_h,
-            radius=26,
-            fill=self.panel,
-            outline="#1f3a44",
-        )
+    def _draw_weather(self, width: int, height: int, margin: int) -> None:
+        card_w = min(width - margin * 2, 620)
+        card_h = min(138, max(118, int(height * 0.27)))
+        x1 = (width - card_w) / 2
+        y1 = height - card_h - margin
+        x2 = x1 + card_w
+        y2 = y1 + card_h
 
-        icon_box = min(weather_h - 44, 130)
-        icon_x = weather_x + 26
-        icon_y = weather_y + (weather_h - icon_box) / 2
-        self._rounded_rect(
-            icon_x,
-            icon_y,
-            icon_x + icon_box,
-            icon_y + icon_box,
-            radius=24,
-            fill="#102b35",
-            outline="#294650",
-        )
-        self.canvas.create_text(
-            icon_x + icon_box / 2,
-            icon_y + icon_box / 2,
-            text=self.weather_data["mark"],
-            anchor="center",
-            fill=self.accent,
-            font=self.mark_font,
-        )
+        self._rounded_rect(x1, y1, x2, y2, radius=20, fill=self.panel, outline=self.line)
+        self.canvas.create_rectangle(x1 + 1, y1 + 1, x2 - 1, y1 + 7, fill=self.panel_2, outline="")
 
-        content_x = icon_x + icon_box + 26
+        icon_size = min(86, card_h - 44)
+        icon_x = x1 + 28
+        icon_y = y1 + (card_h - icon_size) / 2
+        self._draw_weather_icon(icon_x, icon_y, icon_size, self.weather_data["icon"])
+
+        text_x = icon_x + icon_size + 28
         self.canvas.create_text(
-            content_x,
-            weather_y + 26,
-            text=self.weather_data["temp"],
+            text_x,
+            y1 + 22,
+            text=f"{self.weather_data['temp']}°",
             anchor="nw",
             fill=self.fg,
             font=self.temp_font,
         )
         self.canvas.create_text(
-            content_x,
-            weather_y + 86,
+            text_x,
+            y1 + 76,
             text=self.weather_data["condition"],
             anchor="nw",
             fill=self.fg,
             font=self.weather_font,
-            width=max(180, weather_w - (content_x - weather_x) - 22),
+            width=max(200, x2 - text_x - 22),
         )
         self.canvas.create_text(
-            content_x,
-            weather_y + 116,
+            text_x,
+            y1 + 103,
             text=self.weather_data["details"],
             anchor="nw",
             fill=self.muted,
             font=self.small_font,
-            width=max(180, weather_w - (content_x - weather_x) - 22),
+            width=max(200, x2 - text_x - 22),
         )
 
-        state_name = str(self.assistant_state.get("state", "idle")).lower()
-        if state_name != "idle":
-            self._draw_status(width, margin, state_name)
+    def _draw_weather_icon(self, x: float, y: float, size: float, kind: str) -> None:
+        self._rounded_rect(x, y, x + size, y + size, radius=18, fill="#0c2530", outline="#1e3a49")
+        cx = x + size / 2
+        cy = y + size / 2
+        s = size / 100
 
-    def _draw_background(self, width: int, height: int) -> None:
-        bands = 56
-        band_h = max(1, math.ceil(height / bands))
-        for index in range(bands):
-            y1 = index * band_h
-            y2 = min(height, y1 + band_h)
-            ratio = index / max(bands - 1, 1)
-            r = int(5 + (10 * ratio))
-            g = int(14 + (14 * ratio))
-            b = int(20 + (19 * ratio))
-            self.canvas.create_rectangle(0, y1, width, y2, fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
+        if kind in {"sun", "partly"}:
+            self.canvas.create_oval(cx - 18 * s, cy - 18 * s, cx + 18 * s, cy + 18 * s, fill=self.warn, outline="")
+            for angle in range(0, 360, 45):
+                dx = math.cos(math.radians(angle))
+                dy = math.sin(math.radians(angle))
+                self.canvas.create_line(cx + dx * 26 * s, cy + dy * 26 * s, cx + dx * 36 * s, cy + dy * 36 * s, fill=self.warn, width=max(2, int(3 * s)))
 
-        self.canvas.create_oval(
-            -int(width * 0.18),
-            -int(height * 0.35),
-            int(width * 0.55),
-            int(height * 0.55),
-            fill="#0d2a32",
-            outline="",
-        )
-        self.canvas.create_oval(
-            int(width * 0.62),
-            int(height * 0.06),
-            int(width * 1.18),
-            int(height * 0.68),
-            fill="#10242d",
-            outline="",
-        )
+        if kind in {"cloud", "partly", "rain", "snow", "storm", "fog"}:
+            cloud_y = cy + (9 * s if kind == "partly" else 0)
+            self.canvas.create_oval(cx - 34 * s, cloud_y - 4 * s, cx - 4 * s, cloud_y + 26 * s, fill=self.accent, outline="")
+            self.canvas.create_oval(cx - 18 * s, cloud_y - 20 * s, cx + 20 * s, cloud_y + 18 * s, fill=self.accent, outline="")
+            self.canvas.create_oval(cx + 4 * s, cloud_y - 8 * s, cx + 36 * s, cloud_y + 24 * s, fill=self.accent, outline="")
+            self.canvas.create_rectangle(cx - 32 * s, cloud_y + 8 * s, cx + 34 * s, cloud_y + 26 * s, fill=self.accent, outline="")
+
+        if kind == "rain":
+            for dx in (-18, 0, 18):
+                self.canvas.create_line(cx + dx * s, cy + 26 * s, cx + (dx - 7) * s, cy + 42 * s, fill="#84e7f4", width=max(2, int(3 * s)))
+        elif kind == "snow":
+            for dx in (-18, 0, 18):
+                self.canvas.create_text(cx + dx * s, cy + 38 * s, text="*", anchor="center", fill="#d7f8ff", font=self.weather_font)
+        elif kind == "storm":
+            points = [cx - 4 * s, cy + 20 * s, cx - 16 * s, cy + 48 * s, cx + 3 * s, cy + 48 * s, cx - 5 * s, cy + 72 * s, cx + 22 * s, cy + 35 * s, cx + 4 * s, cy + 35 * s]
+            self.canvas.create_polygon(points, fill=self.warn, outline="")
+        elif kind == "fog":
+            for offset in (22, 34, 46):
+                self.canvas.create_line(cx - 34 * s, cy + offset * s, cx + 34 * s, cy + offset * s, fill=self.muted, width=max(2, int(3 * s)))
 
     def _draw_status(self, width: int, margin: int, state_name: str) -> None:
         message = str(self.assistant_state.get("message") or self.message_for_state(state_name))
-        pill_w = max(190, min(360, len(message) * 9 + 92))
-        pill_h = 54
+        pill_w = max(190, min(330, len(message) * 8 + 86))
+        pill_h = 48
         x2 = width - margin
         y1 = margin
         x1 = x2 - pill_w
         color = self.warn if state_name == "listening" else self.accent
 
-        self._rounded_rect(x1, y1, x2, y1 + pill_h, radius=22, fill="#0b2028", outline="#294650")
-        self.canvas.create_oval(x1 + 18, y1 + 21, x1 + 30, y1 + 33, fill=color, outline="")
-        self.canvas.create_text(
-            x1 + 44,
-            y1 + 13,
-            text=state_name.upper(),
-            anchor="nw",
-            fill=color,
-            font=self.label_font,
-        )
-        self.canvas.create_text(
-            x1 + 44,
-            y1 + 31,
-            text=message,
-            anchor="nw",
-            fill=self.fg,
-            font=self.status_font,
-        )
+        self._rounded_rect(x1, y1, x2, y1 + pill_h, radius=18, fill="#0c151d", outline=self.line)
+        self.canvas.create_oval(x1 + 16, y1 + 18, x1 + 28, y1 + 30, fill=color, outline="")
+        self.canvas.create_text(x1 + 42, y1 + 10, text=state_name.upper(), anchor="nw", fill=color, font=self.label_font)
+        self.canvas.create_text(x1 + 42, y1 + 27, text=message, anchor="nw", fill=self.fg, font=self.status_font)
 
     def _rounded_rect(self, x1: float, y1: float, x2: float, y2: float, *, radius: int, fill: str, outline: str) -> None:
         points = [
-            x1 + radius,
-            y1,
-            x2 - radius,
-            y1,
-            x2,
-            y1,
-            x2,
-            y1 + radius,
-            x2,
-            y2 - radius,
-            x2,
-            y2,
-            x2 - radius,
-            y2,
-            x1 + radius,
-            y2,
-            x1,
-            y2,
-            x1,
-            y2 - radius,
-            x1,
-            y1 + radius,
-            x1,
-            y1,
+            x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius,
+            x2, y2 - radius, x2, y2, x2 - radius, y2, x1 + radius, y2,
+            x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1,
         ]
         self.canvas.create_polygon(points, smooth=True, splinesteps=16, fill=fill, outline=outline)
 
@@ -329,10 +364,11 @@ class IdleScreen:
         now = datetime.now()
         time_format = str(self.config.get("timeFormat", "auto")).lower()
         if time_format == "24h":
-            display_time = now.strftime("%H:%M")
+            self.display_time = now.strftime("%H:%M")
+            self.display_ampm = ""
         else:
-            display_time = now.strftime("%I:%M %p").lstrip("0")
-        self.display_time = display_time
+            self.display_time = now.strftime("%I:%M").lstrip("0")
+            self.display_ampm = now.strftime("%p")
         self.display_date = f"{now:%A}, {now:%B} {now.day}"
         self.draw()
         self.root.after(1000, self.update_clock)
@@ -359,16 +395,16 @@ class IdleScreen:
                 data = json.loads(response.read().decode("utf-8"))
             current = data["current"]
             units = data.get("current_units", {})
-            condition, mark = WEATHER_CODES.get(int(current["weather_code"]), ("Current weather", "WX"))
+            condition, icon = WEATHER_CODES.get(int(current["weather_code"]), ("Current weather", "cloud"))
             self.weather_queue.put(
                 {
-                    "mark": mark,
-                    "temp": f"{round_number(current.get('temperature_2m'))}°",
+                    "icon": icon,
+                    "temp": round_number(current.get("temperature_2m")),
                     "condition": condition,
                     "details": (
-                        f"{self.config['weatherLocation']} | "
+                        f"{self.config['weatherLocation']}  |  "
                         f"Feels like {round_number(current.get('apparent_temperature'))}"
-                        f"{units.get('temperature_2m', '')} | "
+                        f"{units.get('temperature_2m', '')}  |  "
                         f"Wind {round_number(current.get('wind_speed_10m'))} {units.get('wind_speed_10m', '')}"
                     ),
                 }
@@ -376,8 +412,8 @@ class IdleScreen:
         except Exception:
             self.weather_queue.put(
                 {
-                    "mark": "--",
-                    "temp": "--°",
+                    "icon": "cloud",
+                    "temp": "--",
                     "condition": "Weather unavailable",
                     "details": "Check network or location settings.",
                 }
@@ -396,6 +432,10 @@ class IdleScreen:
             state = {"state": "idle"}
 
         name = str(state.get("state", "idle")).lower()
+        if name not in {"idle", "muted"}:
+            self.fade_out_and_close()
+            return
+
         self.assistant_state = {
             "state": name,
             "message": str(state.get("message") or self.message_for_state(name)),

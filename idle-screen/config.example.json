@@ -8,6 +8,8 @@
   "timeFormat": "auto",
   "refreshMinutes": 10,
   "statePollSeconds": 2,
-  "stateFile": "~/.config/smart-display-idle/state.json",
-  "fullscreen": true
+  "stateFile": "~/.smart-display-assistant/state.json",
+  "fullscreen": true,
+  "fadeInMs": 450,
+  "idleTimeoutSeconds": 60
 }

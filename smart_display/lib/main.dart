@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -53,11 +54,13 @@ class RootShell extends StatefulWidget {
 
 class _RootShellState extends State<RootShell>
     with SingleTickerProviderStateMixin {
-  final _pages = const PageScrollPhysics();
+  // Idle screensaver: fade in after this much inactivity; any touch wakes it.
+  static const _idleAfter = Duration(minutes: 3);
+  static const _fade = Duration(milliseconds: 700);
+
   late final AnimationController _clock;
-  // Land on the dashboard mockup; swipe right for the idle screen.
-  final _controller = PageController(initialPage: 1);
-  int _page = 1;
+  Timer? _idleTimer;
+  bool _idle = false;
 
   @override
   void initState() {
@@ -66,54 +69,64 @@ class _RootShellState extends State<RootShell>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
+    _resetIdleTimer();
   }
 
   @override
   void dispose() {
+    _idleTimer?.cancel();
     _clock.dispose();
-    _controller.dispose();
     super.dispose();
+  }
+
+  void _resetIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(_idleAfter, () {
+      if (mounted) setState(() => _idle = true);
+    });
+  }
+
+  void _onActivity(PointerEvent _) {
+    if (_idle) setState(() => _idle = false);
+    _resetIdleTimer();
   }
 
   @override
   Widget build(BuildContext context) {
-    const screens = [IdleScreen(), DashboardScreen()];
     return GlassClock(
       clock: _clock,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF06080F),
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            const AnimatedBackground(),
-            PageView(
-              controller: _controller,
-              physics: _pages,
-              onPageChanged: (i) => setState(() => _page = i),
-              children: screens,
-            ),
-            Positioned(
-              bottom: 16,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(screens.length, (i) {
-                  final active = i == _page;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: active ? 18 : 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: Color(active ? 0xCCFFFFFF : 0x40FFFFFF),
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  );
-                }),
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _onActivity,
+        onPointerMove: _onActivity,
+        child: Scaffold(
+          backgroundColor: const Color(0xFF06080F),
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              const AnimatedBackground(),
+              // Active UI and idle screen cross-fade over the shared
+              // background — no hard cut, just a soft dissolve.
+              IgnorePointer(
+                ignoring: _idle,
+                child: AnimatedOpacity(
+                  opacity: _idle ? 0 : 1,
+                  duration: _fade,
+                  curve: Curves.easeInOut,
+                  child: const DashboardScreen(),
+                ),
               ),
-            ),
-          ],
+              IgnorePointer(
+                ignoring: !_idle,
+                child: AnimatedOpacity(
+                  opacity: _idle ? 1 : 0,
+                  duration: _fade,
+                  curve: Curves.easeInOut,
+                  child: const IdleScreen(),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -99,6 +99,14 @@ class IdleScreen:
         self.root.bind("q", lambda _event: self.root.destroy())
         self.root.attributes("-fullscreen", bool(config.get("fullscreen", True)))
 
+        self.weather_data = {
+            "mark": "--",
+            "temp": "--°",
+            "condition": "Loading weather",
+            "details": "Checking local forecast...",
+        }
+        self.assistant_state = {"state": "idle", "message": "Ready"}
+
         self.build_ui()
         self.update_clock()
         self.schedule_weather()
@@ -109,72 +117,213 @@ class IdleScreen:
         width = max(self.root.winfo_screenwidth(), 800)
         scale = width / 800
 
-        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(92 * scale), weight="bold")
-        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(22 * scale))
-        self.label_font = tkfont.Font(family="DejaVu Sans", size=int(14 * scale), weight="bold")
-        self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(52 * scale), weight="bold")
+        self.time_font = tkfont.Font(family="DejaVu Sans", size=int(112 * scale), weight="bold")
+        self.date_font = tkfont.Font(family="DejaVu Sans", size=int(19 * scale))
+        self.label_font = tkfont.Font(family="DejaVu Sans", size=int(11 * scale), weight="bold")
+        self.temp_font = tkfont.Font(family="DejaVu Sans", size=int(46 * scale), weight="bold")
         self.weather_font = tkfont.Font(family="DejaVu Sans", size=int(18 * scale), weight="bold")
-        self.small_font = tkfont.Font(family="DejaVu Sans", size=int(13 * scale))
-        self.mark_font = tkfont.Font(family="DejaVu Sans", size=int(48 * scale), weight="bold")
+        self.small_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale))
+        self.mark_font = tkfont.Font(family="DejaVu Sans", size=int(54 * scale), weight="bold")
+        self.status_font = tkfont.Font(family="DejaVu Sans", size=int(12 * scale), weight="bold")
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        main = tk.Frame(self.root, bg=self.bg, padx=36, pady=28)
-        main.grid(row=0, column=0, sticky="nsew")
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self.root, bg=self.bg, highlightthickness=0, bd=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas.bind("<Configure>", lambda _event: self.draw())
 
-        clock = tk.Frame(main, bg=self.bg)
-        clock.grid(row=0, column=0, sticky="sw")
+    def draw(self) -> None:
+        if not hasattr(self, "canvas"):
+            return
 
-        tk.Label(
-            clock,
+        width = max(self.canvas.winfo_width(), 1)
+        height = max(self.canvas.winfo_height(), 1)
+        margin = max(28, int(width * 0.045))
+        bottom_margin = max(24, int(height * 0.055))
+
+        self.canvas.delete("all")
+        self._draw_background(width, height)
+
+        self.canvas.create_text(
+            margin,
+            margin,
             text=str(self.config["displayName"]).upper(),
-            fg=self.accent,
-            bg=self.bg,
+            anchor="nw",
+            fill=self.accent,
             font=self.label_font,
-        ).pack(anchor="w")
+        )
 
-        self.time_label = tk.Label(clock, text="--:--", fg=self.fg, bg=self.bg, font=self.time_font)
-        self.time_label.pack(anchor="w")
+        self.canvas.create_text(
+            margin,
+            margin + 30,
+            text=getattr(self, "display_time", "--:--"),
+            anchor="nw",
+            fill=self.fg,
+            font=self.time_font,
+        )
 
-        self.date_label = tk.Label(clock, text="Loading date", fg=self.muted, bg=self.bg, font=self.date_font)
-        self.date_label.pack(anchor="w")
+        self.canvas.create_text(
+            margin + 5,
+            margin + int(height * 0.285),
+            text=getattr(self, "display_date", "Loading date"),
+            anchor="nw",
+            fill=self.muted,
+            font=self.date_font,
+        )
 
-        weather = tk.Frame(main, bg=self.panel, padx=22, pady=18)
-        weather.grid(row=1, column=0, sticky="ew", pady=(28, 0))
-        weather.columnconfigure(1, weight=1)
+        weather_w = min(width - (margin * 2), int(width * 0.78))
+        weather_h = max(148, int(height * 0.24))
+        weather_x = margin
+        weather_y = height - weather_h - bottom_margin
+        self._rounded_rect(
+            weather_x,
+            weather_y,
+            weather_x + weather_w,
+            weather_y + weather_h,
+            radius=26,
+            fill=self.panel,
+            outline="#1f3a44",
+        )
 
-        self.weather_mark = tk.Label(weather, text="--", fg=self.accent, bg=self.panel, font=self.mark_font, width=3)
-        self.weather_mark.grid(row=0, column=0, rowspan=3, sticky="nsew", padx=(0, 20))
+        icon_box = min(weather_h - 44, 130)
+        icon_x = weather_x + 26
+        icon_y = weather_y + (weather_h - icon_box) / 2
+        self._rounded_rect(
+            icon_x,
+            icon_y,
+            icon_x + icon_box,
+            icon_y + icon_box,
+            radius=24,
+            fill="#102b35",
+            outline="#294650",
+        )
+        self.canvas.create_text(
+            icon_x + icon_box / 2,
+            icon_y + icon_box / 2,
+            text=self.weather_data["mark"],
+            anchor="center",
+            fill=self.accent,
+            font=self.mark_font,
+        )
 
-        self.temp_label = tk.Label(weather, text="--°", fg=self.fg, bg=self.panel, font=self.temp_font)
-        self.temp_label.grid(row=0, column=1, sticky="w")
-
-        self.condition_label = tk.Label(
-            weather,
-            text="Loading weather",
-            fg=self.fg,
-            bg=self.panel,
+        content_x = icon_x + icon_box + 26
+        self.canvas.create_text(
+            content_x,
+            weather_y + 26,
+            text=self.weather_data["temp"],
+            anchor="nw",
+            fill=self.fg,
+            font=self.temp_font,
+        )
+        self.canvas.create_text(
+            content_x,
+            weather_y + 86,
+            text=self.weather_data["condition"],
+            anchor="nw",
+            fill=self.fg,
             font=self.weather_font,
+            width=max(180, weather_w - (content_x - weather_x) - 22),
         )
-        self.condition_label.grid(row=1, column=1, sticky="w")
-
-        self.details_label = tk.Label(
-            weather,
-            text="Checking local forecast...",
-            fg=self.muted,
-            bg=self.panel,
+        self.canvas.create_text(
+            content_x,
+            weather_y + 116,
+            text=self.weather_data["details"],
+            anchor="nw",
+            fill=self.muted,
             font=self.small_font,
+            width=max(180, weather_w - (content_x - weather_x) - 22),
         )
-        self.details_label.grid(row=2, column=1, sticky="w")
 
-        self.status_frame = tk.Frame(main, bg=self.bg, padx=12, pady=8, highlightthickness=1, highlightbackground="#294650")
-        self.status_label = tk.Label(self.status_frame, text="IDLE", fg=self.accent, bg=self.bg, font=self.label_font)
-        self.status_label.pack(anchor="e")
-        self.status_message = tk.Label(self.status_frame, text="Ready", fg=self.fg, bg=self.bg, font=self.small_font)
-        self.status_message.pack(anchor="e")
+        state_name = str(self.assistant_state.get("state", "idle")).lower()
+        if state_name != "idle":
+            self._draw_status(width, margin, state_name)
+
+    def _draw_background(self, width: int, height: int) -> None:
+        bands = 56
+        band_h = max(1, math.ceil(height / bands))
+        for index in range(bands):
+            y1 = index * band_h
+            y2 = min(height, y1 + band_h)
+            ratio = index / max(bands - 1, 1)
+            r = int(5 + (10 * ratio))
+            g = int(14 + (14 * ratio))
+            b = int(20 + (19 * ratio))
+            self.canvas.create_rectangle(0, y1, width, y2, fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
+
+        self.canvas.create_oval(
+            -int(width * 0.18),
+            -int(height * 0.35),
+            int(width * 0.55),
+            int(height * 0.55),
+            fill="#0d2a32",
+            outline="",
+        )
+        self.canvas.create_oval(
+            int(width * 0.62),
+            int(height * 0.06),
+            int(width * 1.18),
+            int(height * 0.68),
+            fill="#10242d",
+            outline="",
+        )
+
+    def _draw_status(self, width: int, margin: int, state_name: str) -> None:
+        message = str(self.assistant_state.get("message") or self.message_for_state(state_name))
+        pill_w = max(190, min(360, len(message) * 9 + 92))
+        pill_h = 54
+        x2 = width - margin
+        y1 = margin
+        x1 = x2 - pill_w
+        color = self.warn if state_name == "listening" else self.accent
+
+        self._rounded_rect(x1, y1, x2, y1 + pill_h, radius=22, fill="#0b2028", outline="#294650")
+        self.canvas.create_oval(x1 + 18, y1 + 21, x1 + 30, y1 + 33, fill=color, outline="")
+        self.canvas.create_text(
+            x1 + 44,
+            y1 + 13,
+            text=state_name.upper(),
+            anchor="nw",
+            fill=color,
+            font=self.label_font,
+        )
+        self.canvas.create_text(
+            x1 + 44,
+            y1 + 31,
+            text=message,
+            anchor="nw",
+            fill=self.fg,
+            font=self.status_font,
+        )
+
+    def _rounded_rect(self, x1: float, y1: float, x2: float, y2: float, *, radius: int, fill: str, outline: str) -> None:
+        points = [
+            x1 + radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2,
+            y1,
+            x2,
+            y1 + radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2,
+            x2 - radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1,
+            y2,
+            x1,
+            y2 - radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1,
+        ]
+        self.canvas.create_polygon(points, smooth=True, splinesteps=16, fill=fill, outline=outline)
 
     def update_clock(self) -> None:
         now = datetime.now()
@@ -183,8 +332,9 @@ class IdleScreen:
             display_time = now.strftime("%H:%M")
         else:
             display_time = now.strftime("%I:%M %p").lstrip("0")
-        self.time_label.configure(text=display_time)
-        self.date_label.configure(text=f"{now:%A}, {now:%B} {now.day}")
+        self.display_time = display_time
+        self.display_date = f"{now:%A}, {now:%B} {now.day}"
+        self.draw()
         self.root.after(1000, self.update_clock)
 
     def schedule_weather(self) -> None:
@@ -235,11 +385,8 @@ class IdleScreen:
 
     def drain_weather_queue(self) -> None:
         while not self.weather_queue.empty():
-            weather = self.weather_queue.get_nowait()
-            self.weather_mark.configure(text=weather["mark"])
-            self.temp_label.configure(text=weather["temp"])
-            self.condition_label.configure(text=weather["condition"])
-            self.details_label.configure(text=weather["details"])
+            self.weather_data = self.weather_queue.get_nowait()
+            self.draw()
         self.root.after(500, self.drain_weather_queue)
 
     def update_state(self) -> None:
@@ -249,12 +396,11 @@ class IdleScreen:
             state = {"state": "idle"}
 
         name = str(state.get("state", "idle")).lower()
-        if name == "idle":
-            self.status_frame.grid_forget()
-        else:
-            self.status_label.configure(text=name.upper(), fg=self.warn if name == "listening" else self.accent)
-            self.status_message.configure(text=str(state.get("message") or self.message_for_state(name)))
-            self.status_frame.grid(row=0, column=0, sticky="ne")
+        self.assistant_state = {
+            "state": name,
+            "message": str(state.get("message") or self.message_for_state(name)),
+        }
+        self.draw()
 
         delay = int(max(1, float(self.config["statePollSeconds"])) * 1000)
         self.root.after(delay, self.update_state)

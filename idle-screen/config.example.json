@@ -12,6 +12,6 @@
   "fullscreen": true,
   "fadeInMs": 450,
   "idleTimeoutSeconds": 60,
-  "animationFps": 24,
+  "animationFps": 60,
   "animatedBackground": true
 }

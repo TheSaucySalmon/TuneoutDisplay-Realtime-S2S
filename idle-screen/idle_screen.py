@@ -15,7 +15,7 @@ from tkinter import font as tkfont
 from typing import Any
 
 
-APP_VERSION = "idle-v7"
+APP_VERSION = "idle-v8"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "displayName": "Smart Display",
@@ -30,7 +30,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stateFile": "~/.smart-display-assistant/state.json",
     "fullscreen": True,
     "fadeInMs": 450,
-    "animationFps": 24,
+    "animationFps": 60,
     "animatedBackground": True,
 }
 
@@ -188,7 +188,7 @@ class IdleScreen:
         if bool(self.config.get("animatedBackground", True)):
             self._frame += 1
             self.draw()
-        fps = max(8, min(30, int(self.config.get("animationFps", 24))))
+        fps = max(8, min(60, int(self.config.get("animationFps", 60))))
         self.root.after(int(1000 / fps), self.animate)
 
     def fade_in(self, step: int = 0) -> None:

@@ -49,7 +49,7 @@ Animation can be tuned in `~/.config/smart-display-idle/config.json`:
 
 ```json
 {
-  "animationFps": 24,
+  "animationFps": 60,
   "animatedBackground": true
 }
 ```

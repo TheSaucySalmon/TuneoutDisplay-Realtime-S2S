@@ -1216,7 +1216,10 @@ class CameraCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = _scale(context);
     final r = BorderRadius.circular(18);
-    return ClipRRect(
+    // RepaintBoundary keeps the camera its own layer — when the live feed
+    // updates it won't repaint the rest of the UI, and vice versa.
+    return RepaintBoundary(
+      child: ClipRRect(
       borderRadius: r,
       child: Container(
         decoration: BoxDecoration(
@@ -1263,6 +1266,7 @@ class CameraCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1504,7 +1508,9 @@ class _LiquidGlassState extends State<LiquidGlass> {
               thickness: cfg.intensity,
               paintKey: _paintKey,
             ),
-            child: widget.child,
+            // Isolate the card's content so it isn't re-rasterized every time
+            // the shader repaints.
+            child: RepaintBoundary(child: widget.child),
           ),
         );
       case CardStyle.frosted:

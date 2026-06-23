@@ -32,27 +32,42 @@ static void my_application_activate(GApplication* application) {
   // in case the window manager does more exotic layout, e.g. tiling.
   // If running on Wayland assume the header bar will work (may need changing
   // if future cases occur).
-  gboolean use_header_bar = TRUE;
-#ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
+  // Fullscreen kiosk by default (how it runs on the Pi). Pass --windowed for
+  // desktop development so it opens as a normal resizable window instead.
+  gboolean windowed = FALSE;
+  for (char** arg = self->dart_entrypoint_arguments;
+       arg != nullptr && *arg != nullptr; arg++) {
+    if (g_strcmp0(*arg, "--windowed") == 0) {
+      windowed = TRUE;
     }
   }
+
+  if (windowed) {
+    gboolean use_header_bar = TRUE;
+#ifdef GDK_WINDOWING_X11
+    GdkScreen* screen = gtk_window_get_screen(window);
+    if (GDK_IS_X11_SCREEN(screen)) {
+      const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
+      if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
+        use_header_bar = FALSE;
+      }
+    }
 #endif
-  if (use_header_bar) {
-    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-    gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "smart_display");
-    gtk_header_bar_set_show_close_button(header_bar, TRUE);
-    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+    if (use_header_bar) {
+      GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
+      gtk_widget_show(GTK_WIDGET(header_bar));
+      gtk_header_bar_set_title(header_bar, "smart_display");
+      gtk_header_bar_set_show_close_button(header_bar, TRUE);
+      gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+    } else {
+      gtk_window_set_title(window, "smart_display");
+    }
+    gtk_window_set_default_size(window, 1280, 720);
   } else {
     gtk_window_set_title(window, "smart_display");
+    gtk_window_set_decorated(window, FALSE);
+    gtk_window_fullscreen(window);
   }
-
-  gtk_window_set_default_size(window, 1280, 720);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

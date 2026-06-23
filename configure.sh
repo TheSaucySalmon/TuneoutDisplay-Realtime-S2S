@@ -1072,6 +1072,16 @@ case "$(uname -m)" in
 esac
 FLUTTER_APP_BIN="$FLUTTER_APP_SRC/build/linux/$FLUTTER_ARCH/release/bundle/smart_display"
 
+# Remove the legacy Tkinter idle-screen overlay from any previous install. Its
+# XDG autostart + swayidle watcher would otherwise float fullscreen on top of
+# the native Flutter shell. The Flutter app now owns the idle screen.
+info "Removing any legacy idle-screen autostart/overlay..."
+rm -f "$CURRENT_HOME/.config/autostart/smart-display-idle.desktop"
+rm -rf "$CURRENT_HOME/.local/share/smart-display-idle"
+pkill -f idle-watch.sh 2>/dev/null || true
+pkill -f idle_screen.py 2>/dev/null || true
+pkill swayidle 2>/dev/null || true
+
 if [ ! -d "$FLUTTER_APP_SRC" ]; then
     warn "smart_display/ not found next to configure.sh — skipping Flutter shell."
     warn "Pull the latest repo (cd ~/TuneoutDisplay && git pull) and re-run."

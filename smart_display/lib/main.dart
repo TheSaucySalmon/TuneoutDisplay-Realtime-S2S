@@ -138,20 +138,28 @@ class IdleScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(36, 28, 36, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            _IdleHeader(),
-            Spacer(),
-            _Clock(),
-            Spacer(flex: 2),
-            WeatherCard(),
-          ],
+    // Opaque wavy aurora background so the idle screen fully covers the
+    // dashboard as it fades in.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const IdleBackground(),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(36, 28, 36, 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                _IdleHeader(),
+                Spacer(),
+                _Clock(),
+                Spacer(flex: 2),
+                WeatherCard(),
+              ],
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -236,6 +244,7 @@ class WeatherCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return LiquidGlass(
       radius: 16,
+      forceFrosted: true,
       child: Padding(
         padding: const EdgeInsets.all(18),
         child: Row(
@@ -715,12 +724,18 @@ class LiquidGlass extends StatefulWidget {
   final double radius;
   final double thickness;
 
+  /// Force the BackdropFilter frosted path instead of the glow-sampling shader.
+  /// Used over backgrounds the shader doesn't know about (e.g. the idle waves),
+  /// so the blur reflects what's actually behind the card.
+  final bool forceFrosted;
+
   const LiquidGlass({
     super.key,
     required this.child,
     this.height,
     this.radius = 18,
     this.thickness = 16,
+    this.forceFrosted = false,
   });
 
   @override
@@ -733,7 +748,9 @@ class _LiquidGlassState extends State<LiquidGlass> {
   @override
   Widget build(BuildContext context) {
     final program = glassProgram;
-    if (program == null) return _FrostedFallback(widget: widget);
+    if (program == null || widget.forceFrosted) {
+      return _FrostedFallback(widget: widget);
+    }
 
     final clock = GlassClock.of(context);
     final screen = MediaQuery.sizeOf(context);
@@ -827,6 +844,94 @@ class _FrostedFallback extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Idle-screen background: the flowing aurora waves + drifting stars ported
+/// from the original idle-v13 screen, driven by the shared clock so the motion
+/// wraps seamlessly.
+class IdleBackground extends StatelessWidget {
+  const IdleBackground({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final clock = GlassClock.of(context);
+    return AnimatedBuilder(
+      animation: clock,
+      builder: (_, _) =>
+          CustomPaint(painter: _IdleWavesPainter(clock.value), size: Size.infinite),
+    );
+  }
+}
+
+class _IdleWavesPainter extends CustomPainter {
+  final double t;
+  _IdleWavesPainter(this.t);
+
+  // (baseFrac, ampFrac, color) for each aurora band.
+  static const _layers = [
+    (0.18, 0.026, Color(0xFF0B2631)),
+    (0.285, 0.036, Color(0xFF0D3144)),
+    (0.39, 0.046, Color(0xFF08202E)),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    const tau = 2 * math.pi;
+
+    // Deep navy vertical gradient base.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF04080E), Color(0xFF0C1A2C)],
+        ).createShader(Offset.zero & size),
+    );
+
+    // Aurora waves: thick, soft, smoothly drifting sine bands.
+    for (var li = 0; li < _layers.length; li++) {
+      final (baseFrac, ampFrac, color) = _layers[li];
+      final baseY = h * baseFrac;
+      final amp = h * ampFrac;
+      final phase = t * tau * (li + 1); // integer cycles → seamless loop
+      final path = Path();
+      const n = 64;
+      for (var i = 0; i <= n; i++) {
+        final x = w * i / n;
+        final y = baseY + math.sin(i * 0.82 * 9 / n + phase) * amp;
+        i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(12, h * 0.045)
+          ..strokeCap = StrokeCap.round
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+      );
+    }
+
+    // Drifting stars.
+    final starMax = math.max(80, (h * 0.55).toInt());
+    for (var i = 0; i < 12; i++) {
+      final x = (i * 137 + t * w * 2) % w;
+      final y = 35 + (i * 53) % starMax;
+      final pulse = (math.sin(t * tau * 3 + i) + 1) / 2;
+      final color =
+          pulse < 0.65 ? const Color(0xFF173849) : const Color(0xFF24586B);
+      canvas.drawCircle(
+        Offset(x, y.toDouble()),
+        i % 4 == 0 ? 2 : 1,
+        Paint()..color = color,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _IdleWavesPainter old) => old.t != t;
 }
 
 class AnimatedBackground extends StatelessWidget {

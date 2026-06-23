@@ -53,7 +53,7 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 
 ## Features
 
-- **HA Lovelace kiosk** - Chromium in kiosk mode, launches automatically after boot and waits for HA to be reachable before opening
+- **Native display shell** - Flutter app (`smart_display/`) that boots fullscreen under labwc: liquid-glass dashboard, static idle screensaver, live HA entities, weather, and camera snapshots. No browser.
 - **Standalone Pi OS idle screen** - optional native Python screen with local time, date, and Open-Meteo weather, without requiring Home Assistant
 - **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
 - **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
@@ -77,7 +77,7 @@ mqtt-bridge.py                  # MQTT discovery + HA control entities
 touch-scroll.py                 # Touch swipe -> scroll daemon
 stop-server.py                  # Helper script for stopping the local server
 README.md                       # Main project documentation
-ha-configuration.md             # Home Assistant setup / Lovelace notes
+ha-configuration.md             # Home Assistant setup notes
 OPENAI-REALTIME.md              # Realtime implementation notes
 LICENSE.txt                     # License
 
@@ -97,8 +97,9 @@ assistant/
   wakeword.py                   # OpenWakeWord integration
   __init__.py
 
-lovelace/
-  smart-display-card.js         # Custom HA card for smart display controls
+smart_display/
+  lib/main.dart                 # Native Flutter display shell
+  shaders/liquid_glass.frag     # Liquid-glass refraction shader
 
 stl-files/
   body.stl                      # Main printed enclosure body
@@ -136,7 +137,6 @@ chmod +x configure.sh
 The script prompts you for:
 - Device name (used as the HA device name and Music Assistant player name)
 - Home Assistant URL
-- Lovelace kiosk URL (optional - skip to set up kiosk manually later)
 - Audio profile (`generic_usb` or `seeed_2mic_hat`)
 - MQTT broker host, port, username, and password
 - OpenAI API key
@@ -182,41 +182,6 @@ For `generic_usb`:
 - Mic Sensitivity (number)
 
 If it doesn't appear, check that MQTT discovery is enabled in the MQTT integration settings.
-
-### 3. Add the Lovelace control card (optional)
-
-The custom card gives you volume and brightness controls in any HA dashboard. Its status and mute chip can be preserved later by exposing compatible entities from your assistant runtime.
-
-1. Copy `lovelace/smart-display-card.js` to `/config/www/` on your HA instance
-2. In HA go to **Settings -> Dashboards -> Resources -> Add**
-   - URL: `/local/smart-display-card.js`
-   - Type: JavaScript module
-3. Add the card to a dashboard:
-
-```yaml
-type: custom:smart-display-card
-name: My Display
-state_entity: sensor.YOUR_DEVICE_assistant_state
-brightness_entity: number.YOUR_DEVICE_brightness
-mute_entity: switch.YOUR_DEVICE_mute
-# Optional later:
-# tts_volume_entity: number.YOUR_DEVICE_tts_volume
-# media_volume_entity: number.YOUR_DEVICE_media_volume
-# mic_gain_entity: number.YOUR_DEVICE_mic_gain
-```
-
-Find your exact entity IDs under **Developer Tools -> States** and search for your device name. The current baseline publishes `sensor.*_assistant_state`, `switch.*_mute`, and `number.*_brightness`. The card also still supports older `assist_satellite.*` style entities if you have them.
-
-If you have exposed volume / mic entities, add them too. On `generic_usb`, the media/speaker volume entity may still use `number.*_media_volume` style IDs in MQTT topics while showing as **Speaker Volume** in HA.
-
-### 4. HACS Addons
-
-Included is a drop-in YAML file (`lovelace/smart-display-dashboard.yaml`) that can be used as a starting point. You can make your own, but if you want a quick baseline, copy it into the raw dashboard editor and replace the placeholder entities with your own.
-
-Install **Swipe Navigation** from HACS (Frontend section), then add `/hacsfiles/swipe-navigation/swipe-navigation.js` as a Lovelace resource. No card config needed - it activates automatically on all views.
-
-Install **Kiosk Mode** from HACS to remove the sidebar and header bar from the dashboard. If you get stuck in the dasboard because of Kiosk Mode, add "?disable_km" at the end of the URL. EX: `http://yourhomeassistantlink:0000/mycooldashboard?disable_km`
-
 
 ---
 
@@ -289,10 +254,6 @@ Edit `/usr/local/bin/touch-scroll.py` and adjust `TICKS_PER_SCREEN` (higher = fa
 ```bash
 sudo systemctl restart smart-display-touch-scroll
 ```
-
-### Kiosk URL
-
-Re-run `./configure.sh` and enter a new kiosk URL at the prompt, or edit `~/.config/labwc/autostart` directly.
 
 ### Custom wake word
 
@@ -383,8 +344,7 @@ sudo reboot
 - Check `journalctl -u smart-display-mqtt -f` for connection errors
 
 **Home Assistant gets slow only when the Pi is on**
-- First stop the HA kiosk/browser if it is still enabled. A live camera card can keep a stream open through HA the whole time the Pi is awake.
-- Then test services one at a time:
+- A live camera stream can keep load on HA the whole time the Pi is awake. Test services one at a time:
 
 ```bash
 sudo systemctl stop smart-display-assistant
@@ -399,10 +359,9 @@ sudo journalctl -u smart-display-assistant -n 100 --no-pager
 
 Repeated `api-key-missing`, `websocket-client-missing`, or OpenWakeWord startup errors mean the Pi was retrying assistant work in the background. The runtime now deduplicates repeated MQTT state publishes and backs off failed wake-word starts.
 
-**Assistant state shows unavailable / card says Unknown**
+**Assistant state shows unavailable**
 - Check `sudo systemctl status smart-display-assistant --no-pager`
 - Check `sudo journalctl -u smart-display-assistant -n 80 --no-pager`
-- If the runtime is down, the Lovelace card will show `Unknown`
 
 **Assistant runtime starts but Realtime does not respond**
 - Check `/etc/smart-display/assistant.env` for `OPENAI_API_KEY` and Realtime settings

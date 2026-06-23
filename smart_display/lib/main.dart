@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -45,6 +47,214 @@ class GlassClock extends InheritedWidget {
   bool updateShouldNotify(GlassClock old) => clock != old.clock;
 }
 
+// ── Location (Bally, PA) — will become user-configurable later ───────────────
+const double kLat = 40.4015;
+const double kLon = -75.5874;
+const String kLocationLabel = 'Bally, PA';
+
+const _weekdayFull = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+];
+const _monthFull = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+String _hourMinute(DateTime t) {
+  final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+  return '$h:${t.minute.toString().padLeft(2, '0')}';
+}
+
+String _hourMinuteAmPm(DateTime t) =>
+    '${_hourMinute(t)} ${t.hour < 12 ? 'AM' : 'PM'}';
+
+String _fullDate(DateTime t) =>
+    '${_weekdayFull[t.weekday - 1]}, ${_monthFull[t.month - 1]} ${t.day}';
+
+/// Rebuilds its [builder] every time the wall-clock minute changes.
+class ClockText extends StatefulWidget {
+  final Widget Function(BuildContext, DateTime) builder;
+  const ClockText({super.key, required this.builder});
+
+  @override
+  State<ClockText> createState() => _ClockTextState();
+}
+
+class _ClockTextState extends State<ClockText> {
+  DateTime _now = DateTime.now();
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final n = DateTime.now();
+      if (n.minute != _now.minute || n.hour != _now.hour) {
+        setState(() => _now = n);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _now);
+}
+
+class WeatherData {
+  final int tempF;
+  final int feelsF;
+  final String condition;
+  final String iconKind;
+  final String wind; // e.g. "NE 7 mph"
+  final bool ok;
+  const WeatherData({
+    required this.tempF,
+    required this.feelsF,
+    required this.condition,
+    required this.iconKind,
+    required this.wind,
+    required this.ok,
+  });
+}
+
+// Open-Meteo WMO weather codes → (condition, icon kind).
+const Map<int, (String, String)> _weatherCodes = {
+  0: ('Clear', 'sun'),
+  1: ('Mostly clear', 'sun'),
+  2: ('Partly cloudy', 'partly'),
+  3: ('Cloudy', 'cloud'),
+  45: ('Fog', 'fog'),
+  48: ('Freezing fog', 'fog'),
+  51: ('Light drizzle', 'rain'),
+  53: ('Drizzle', 'rain'),
+  55: ('Heavy drizzle', 'rain'),
+  56: ('Freezing drizzle', 'rain'),
+  57: ('Freezing drizzle', 'rain'),
+  61: ('Light rain', 'rain'),
+  63: ('Rain', 'rain'),
+  65: ('Heavy rain', 'rain'),
+  66: ('Freezing rain', 'rain'),
+  67: ('Freezing rain', 'rain'),
+  71: ('Light snow', 'snow'),
+  73: ('Snow', 'snow'),
+  75: ('Heavy snow', 'snow'),
+  77: ('Snow grains', 'snow'),
+  80: ('Rain showers', 'rain'),
+  81: ('Rain showers', 'rain'),
+  82: ('Heavy showers', 'rain'),
+  85: ('Snow showers', 'snow'),
+  86: ('Snow showers', 'snow'),
+  95: ('Thunderstorms', 'storm'),
+  96: ('Thunderstorms', 'storm'),
+  99: ('Thunderstorms', 'storm'),
+};
+
+IconData weatherIcon(String kind) {
+  switch (kind) {
+    case 'sun':
+      return Icons.wb_sunny_rounded;
+    case 'partly':
+      return Icons.wb_cloudy_rounded;
+    case 'fog':
+      return Icons.foggy;
+    case 'rain':
+      return Icons.water_drop_rounded;
+    case 'snow':
+      return Icons.ac_unit_rounded;
+    case 'storm':
+      return Icons.thunderstorm_rounded;
+    default:
+      return Icons.cloud_rounded;
+  }
+}
+
+String _cardinal(num? deg) {
+  if (deg == null) return '';
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return dirs[(((deg + 22.5) ~/ 45) % 8).toInt()];
+}
+
+/// Fetches current conditions from Open-Meteo and refreshes every 10 minutes.
+class WeatherController extends ChangeNotifier {
+  WeatherData? data;
+  Timer? _timer;
+
+  void start() {
+    _fetch();
+    _timer = Timer.periodic(const Duration(minutes: 10), (_) => _fetch());
+  }
+
+  Future<void> _fetch() async {
+    final uri = Uri.https('api.open-meteo.com', '/v1/forecast', {
+      'latitude': '$kLat',
+      'longitude': '$kLon',
+      'current':
+          'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m',
+      'temperature_unit': 'fahrenheit',
+      'wind_speed_unit': 'mph',
+      'timezone': 'auto',
+    });
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+      final resp = await (await client.getUrl(uri)).close();
+      final body = await resp.transform(utf8.decoder).join();
+      client.close();
+      final cur = (jsonDecode(body) as Map<String, dynamic>)['current']
+          as Map<String, dynamic>;
+      final (condition, kind) =
+          _weatherCodes[(cur['weather_code'] as num).toInt()] ??
+              ('Current weather', 'cloud');
+      final wind = [
+        _cardinal(cur['wind_direction_10m'] as num?),
+        '${(cur['wind_speed_10m'] as num).round()}',
+        'mph',
+      ].where((p) => p.isNotEmpty).join(' ');
+      data = WeatherData(
+        tempF: (cur['temperature_2m'] as num).round(),
+        feelsF: (cur['apparent_temperature'] as num).round(),
+        condition: condition,
+        iconKind: kind,
+        wind: wind,
+        ok: true,
+      );
+    } catch (_) {
+      data = const WeatherData(
+        tempF: 0,
+        feelsF: 0,
+        condition: 'Weather unavailable',
+        iconKind: 'cloud',
+        wind: '',
+        ok: false,
+      );
+    }
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+}
+
+class WeatherScope extends InheritedNotifier<WeatherController> {
+  const WeatherScope({
+    super.key,
+    required WeatherController controller,
+    required super.child,
+  }) : super(notifier: controller);
+
+  static WeatherController of(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<WeatherScope>()!
+          .notifier!;
+}
+
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -59,6 +269,7 @@ class _RootShellState extends State<RootShell>
   static const _fade = Duration(milliseconds: 700);
 
   late final AnimationController _clock;
+  final WeatherController _weather = WeatherController();
   Timer? _idleTimer;
   bool _idle = false;
 
@@ -69,12 +280,14 @@ class _RootShellState extends State<RootShell>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
+    _weather.start();
     _resetIdleTimer();
   }
 
   @override
   void dispose() {
     _idleTimer?.cancel();
+    _weather.dispose();
     _clock.dispose();
     super.dispose();
   }
@@ -93,7 +306,9 @@ class _RootShellState extends State<RootShell>
 
   @override
   Widget build(BuildContext context) {
-    return GlassClock(
+    return WeatherScope(
+      controller: _weather,
+      child: GlassClock(
       clock: _clock,
       child: Listener(
         behavior: HitTestBehavior.translucent,
@@ -128,6 +343,7 @@ class _RootShellState extends State<RootShell>
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -210,29 +426,31 @@ class _Clock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        Text(
-          '7:08',
-          style: TextStyle(
-            fontSize: 130,
-            fontWeight: FontWeight.w700,
-            height: 1,
-            letterSpacing: -3,
-            color: Colors.white,
+    return ClockText(
+      builder: (_, now) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _hourMinute(now),
+            style: const TextStyle(
+              fontSize: 130,
+              fontWeight: FontWeight.w700,
+              height: 1,
+              letterSpacing: -3,
+              color: Colors.white,
+            ),
           ),
-        ),
-        SizedBox(height: 6),
-        Text(
-          'Monday, June 22',
-          style: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.w400,
-            color: Color(0xCCFFFFFF),
+          const SizedBox(height: 6),
+          Text(
+            _fullDate(now),
+            style: const TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w400,
+              color: Color(0xCCFFFFFF),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -242,6 +460,14 @@ class WeatherCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final w = WeatherScope.of(context).data;
+    final tempStr = w == null ? '--°F' : '${w.tempF}°F';
+    final condition = w?.condition ?? 'Loading…';
+    final details = w == null
+        ? kLocationLabel
+        : (w.ok
+            ? '$kLocationLabel   ·   Feels like ${w.feelsF}°F   ·   Wind ${w.wind}'
+            : 'Check network or location settings.');
     return LiquidGlass(
       radius: 16,
       forceFrosted: true,
@@ -261,33 +487,34 @@ class WeatherCard extends StatelessWidget {
                 ),
                 border: Border.all(color: const Color(0x3359D0FF)),
               ),
-              child: const Icon(Icons.cloud_rounded,
-                  color: Color(0xFF8FE0FF), size: 34),
+              child: Icon(weatherIcon(w?.iconKind ?? 'cloud'),
+                  color: const Color(0xFF8FE0FF), size: 34),
             ),
             const SizedBox(width: 18),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
-              children: const [
+              children: [
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text('72°F',
-                        style: TextStyle(
+                    Text(tempStr,
+                        style: const TextStyle(
                             fontSize: 32,
                             fontWeight: FontWeight.w700,
                             color: Colors.white)),
-                    SizedBox(width: 12),
-                    Text('Cloudy',
-                        style: TextStyle(
+                    const SizedBox(width: 12),
+                    Text(condition,
+                        style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
                             color: Color(0xE6FFFFFF))),
                   ],
                 ),
-                SizedBox(height: 4),
-                Text('Bally, PA   ·   Feels like 77°F   ·   Wind NE 7 mph',
-                    style: TextStyle(fontSize: 14, color: Color(0x99FFFFFF))),
+                const SizedBox(height: 4),
+                Text(details,
+                    style: const TextStyle(
+                        fontSize: 14, color: Color(0x99FFFFFF))),
               ],
             ),
           ],
@@ -454,30 +681,37 @@ class _WeatherStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
-    final now = DateTime.now();
-    final date = '${_weekday[now.weekday - 1]}, '
-        '${now.month}/${now.day}/${now.year % 100}';
+    final w = WeatherScope.of(context).data;
+    final condTemp =
+        w == null ? 'Loading…' : '${w.condition}  ·  ${w.tempF} °F';
     return LiquidGlass(
       radius: 18,
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 16 * s),
         child: Row(
           children: [
-            Icon(Icons.cloud_rounded, color: Colors.white, size: 34 * s),
+            Icon(weatherIcon(w?.iconKind ?? 'cloud'),
+                color: Colors.white, size: 34 * s),
             SizedBox(width: 18 * s),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('7:06 PM',
-                    style: TextStyle(
-                        fontSize: 24 * s,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white)),
-                Text('$date  ·  Cloudy  ·  70 °F',
-                    style:
-                        TextStyle(fontSize: 14 * s, color: Color(0xB3FFFFFF))),
-              ],
+            ClockText(
+              builder: (_, now) {
+                final date = '${_weekday[now.weekday - 1]}, '
+                    '${now.month}/${now.day}/${now.year % 100}';
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_hourMinuteAmPm(now),
+                        style: TextStyle(
+                            fontSize: 24 * s,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white)),
+                    Text('$date  ·  $condTemp',
+                        style: TextStyle(
+                            fontSize: 14 * s, color: const Color(0xB3FFFFFF))),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -516,11 +750,16 @@ class CameraCard extends StatelessWidget {
             Positioned(
               left: 12 * s,
               top: 10 * s,
-              child: Text('2026-06-22 07:06:46 PM',
+              child: ClockText(
+                builder: (_, now) => Text(
+                  '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+                  '${now.day.toString().padLeft(2, '0')}  ${_hourMinuteAmPm(now)}',
                   style: TextStyle(
                       fontSize: 12 * s,
                       color: const Color(0xCCFFFFFF),
-                      shadows: const [Shadow(blurRadius: 4)])),
+                      shadows: const [Shadow(blurRadius: 4)]),
+                ),
+              ),
             ),
             Positioned(
               bottom: 14 * s,

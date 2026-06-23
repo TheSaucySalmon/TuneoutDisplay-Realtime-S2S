@@ -295,14 +295,41 @@ class BrightnessController {
 }
 
 // ── Home Assistant ───────────────────────────────────────────────────────────
-// Entity to drive in the first tie-in test. Set this to a real entity on the Pi
-// (e.g. light.jakes_room). configure.sh writes the URL+token the client reads.
-const String kHaTestEntity = 'light.jakes_room';
-
+// REST for snapshots/service calls; the WebSocket (see EntityCatalog) keeps the
+// entity list live. configure.sh writes the URL+token this client reads.
 class HaClient {
   String? _url;
   String? _token;
   bool get ready => _url != null && _token != null;
+  String? get token => _token;
+
+  /// WebSocket endpoint derived from the REST URL (http→ws, https→wss).
+  String? get wsUrl {
+    final u = _url;
+    if (u == null) return null;
+    final ws = u.startsWith('https')
+        ? u.replaceFirst('https', 'wss')
+        : u.replaceFirst('http', 'ws');
+    return '$ws/api/websocket';
+  }
+
+  /// All current entity states (snapshot).
+  Future<List<Map<String, dynamic>>> states() async {
+    if (!ready) return const [];
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 8);
+      final req = await client.getUrl(Uri.parse('$_url/api/states'));
+      req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      final resp = await req.close();
+      final body = await resp.transform(utf8.decoder).join();
+      client.close();
+      if (resp.statusCode != 200) return const [];
+      return (jsonDecode(body) as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   Future<void> load() async {
     try {
@@ -366,6 +393,143 @@ class HaScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(HaScope old) => client != old.client;
+}
+
+/// Background-maintained catalog of all HA entities. Loads a REST snapshot then
+/// keeps itself current over the HA WebSocket: `state_changed` updates live
+/// values, `entity_registry_updated` (a device/entity added or removed) refreshes
+/// the full list. Reconnects automatically. No UI side effects — this is the
+/// data layer the edit/layout mode reads from.
+class EntityCatalog extends ChangeNotifier {
+  final Map<String, Map<String, dynamic>> _entities = {};
+  HaClient? _ha;
+  WebSocket? _ws;
+  int _msgId = 1;
+  bool _configured = false;
+  bool _connected = false;
+  bool _disposed = false;
+
+  bool get configured => _configured;
+  bool get connected => _connected;
+  int get count => _entities.length;
+  Map<String, dynamic>? state(String entityId) => _entities[entityId];
+  List<MapEntry<String, Map<String, dynamic>>> get all =>
+      _entities.entries.toList();
+
+  Future<void> start(HaClient ha) async {
+    _ha = ha;
+    _configured = ha.ready;
+    notifyListeners();
+    if (!ha.ready) return;
+    await _snapshot();
+    _connect();
+  }
+
+  Future<void> _snapshot() async {
+    final list = await _ha!.states();
+    _entities
+      ..clear()
+      ..addEntries(list
+          .where((e) => e['entity_id'] is String)
+          .map((e) => MapEntry(e['entity_id'] as String, e)));
+    notifyListeners();
+  }
+
+  Future<void> _connect() async {
+    final url = _ha?.wsUrl;
+    if (url == null || _disposed) return;
+    try {
+      _ws = await WebSocket.connect(url);
+      _ws!.listen(_onMessage,
+          onDone: _onDisconnect,
+          onError: (_) => _onDisconnect(),
+          cancelOnError: true);
+    } catch (_) {
+      _scheduleReconnect();
+    }
+  }
+
+  void _send(Map<String, dynamic> m) => _ws?.add(jsonEncode(m));
+
+  void _onMessage(dynamic raw) {
+    Map<String, dynamic> m;
+    try {
+      m = jsonDecode(raw as String) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    switch (m['type']) {
+      case 'auth_required':
+        _send({'type': 'auth', 'access_token': _ha!.token});
+      case 'auth_ok':
+        _connected = true;
+        notifyListeners();
+        _send({
+          'id': _msgId++,
+          'type': 'subscribe_events',
+          'event_type': 'state_changed'
+        });
+        _send({
+          'id': _msgId++,
+          'type': 'subscribe_events',
+          'event_type': 'entity_registry_updated'
+        });
+      case 'auth_invalid':
+        _connected = false;
+        notifyListeners();
+        _ws?.close();
+      case 'event':
+        final ev = m['event'] as Map<String, dynamic>?;
+        final type = ev?['event_type'];
+        if (type == 'state_changed') {
+          final data = ev!['data'] as Map<String, dynamic>;
+          final id = data['entity_id'] as String;
+          final ns = data['new_state'];
+          if (ns == null) {
+            _entities.remove(id);
+          } else {
+            _entities[id] = ns as Map<String, dynamic>;
+          }
+          notifyListeners();
+        } else if (type == 'entity_registry_updated') {
+          _snapshot(); // device/entity added or removed → refresh the catalog
+        }
+    }
+  }
+
+  void _onDisconnect() {
+    _connected = false;
+    _ws = null;
+    notifyListeners();
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_disposed || !_configured) return;
+    Timer(const Duration(seconds: 5), _connect);
+  }
+
+  Future<void> toggle(String entityId) =>
+      _ha?.callService(entityId.split('.').first, 'toggle', entityId) ??
+      Future.value(false).then((_) {});
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _ws?.close();
+    super.dispose();
+  }
+}
+
+class EntityScope extends InheritedNotifier<EntityCatalog> {
+  const EntityScope({
+    super.key,
+    required EntityCatalog catalog,
+    required super.child,
+  }) : super(notifier: catalog);
+
+  static EntityCatalog of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<EntityScope>()!.notifier!;
 }
 
 // ── User-customizable appearance (starter foundation) ────────────────────────
@@ -468,6 +632,7 @@ class _RootShellState extends State<RootShell>
   late final AnimationController _clock;
   final WeatherController _weather = WeatherController();
   final HaClient _ha = HaClient();
+  final EntityCatalog _catalog = EntityCatalog();
   final BrightnessController _brightness = BrightnessController();
   Timer? _idleTimer;
   bool _idle = false;
@@ -482,7 +647,9 @@ class _RootShellState extends State<RootShell>
       duration: const Duration(seconds: 24),
     )..repeat();
     _weather.start();
-    _ha.load();
+    _ha.load().then((_) {
+      if (mounted) _catalog.start(_ha);
+    });
     _brightness.start();
     _resetIdleTimer();
   }
@@ -491,6 +658,7 @@ class _RootShellState extends State<RootShell>
   void dispose() {
     _idleTimer?.cancel();
     _brightness.stop();
+    _catalog.dispose();
     _weather.dispose();
     _clock.dispose();
     super.dispose();
@@ -536,6 +704,8 @@ class _RootShellState extends State<RootShell>
   Widget build(BuildContext context) {
     return HaScope(
       client: _ha,
+      child: EntityScope(
+      catalog: _catalog,
       child: WeatherScope(
       controller: _weather,
       child: GlassClock(
@@ -590,6 +760,7 @@ class _RootShellState extends State<RootShell>
         ),
         ),
         ),
+      ),
       ),
       ),
       ),
@@ -1175,128 +1346,66 @@ class CalendarCard extends StatelessWidget {
   }
 }
 
-/// First Home Assistant tie-in: a live light toggle bound to [kHaTestEntity].
-/// Reflects real on/off state (polled) and toggles via the HA REST API.
-class RoomCard extends StatefulWidget {
+/// Live Home Assistant status, driven by the background [EntityCatalog]. Shows
+/// connection state and how many entities are currently available to place.
+/// Updates instantly as the catalog changes over the WebSocket.
+class RoomCard extends StatelessWidget {
   const RoomCard({super.key});
-
-  @override
-  State<RoomCard> createState() => _RoomCardState();
-}
-
-class _RoomCardState extends State<RoomCard> {
-  Map<String, dynamic>? _state;
-  bool _started = false;
-  bool _busy = false;
-  Timer? _poll;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_started) return;
-    _started = true;
-    _refresh();
-    _poll = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
-  }
-
-  @override
-  void dispose() {
-    _poll?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
-    final ha = HaScope.of(context);
-    if (!ha.ready) return;
-    final s = await ha.state(kHaTestEntity);
-    if (mounted) setState(() => _state = s);
-  }
-
-  Future<void> _toggle() async {
-    final ha = HaScope.of(context);
-    if (!ha.ready || _busy) return;
-    setState(() => _busy = true);
-    await ha.callService(kHaTestEntity.split('.').first, 'toggle', kHaTestEntity);
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    await _refresh();
-    if (mounted) setState(() => _busy = false);
-  }
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
-    final ha = HaScope.of(context);
-    final on = _state?['state'] == 'on';
-    final name = (_state?['attributes'] as Map?)?['friendly_name'] as String? ??
-        "Jake's Room";
-    final status = !ha.ready
-        ? 'HA not configured'
-        : _state == null
-            ? 'Connecting…'
-            : (on ? 'On' : 'Off');
-    final statusColor = on ? const Color(0xFF49E07A) : const Color(0x99FFFFFF);
+    final cat = EntityScope.of(context);
 
-    return GestureDetector(
-      onTap: _toggle,
-      child: LiquidGlass(
-        radius: 20,
-        child: Padding(
-          padding: EdgeInsets.all(22 * s),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(name,
+    final String status;
+    final Color dot;
+    if (!cat.configured) {
+      status = 'Not configured';
+      dot = const Color(0x99FFFFFF);
+    } else if (cat.connected) {
+      status = '${cat.count} entities available';
+      dot = const Color(0xFF49E07A);
+    } else {
+      status = 'Connecting…';
+      dot = const Color(0xFFE0A53B);
+    }
+
+    return LiquidGlass(
+      radius: 20,
+      child: Padding(
+        padding: EdgeInsets.all(22 * s),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Home Assistant',
+                    style: TextStyle(
+                        fontSize: 22 * s,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white)),
+                Container(
+                  width: 12 * s,
+                  height: 12 * s,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: dot),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Icon(Icons.hub_rounded,
+                    size: 20 * s, color: const Color(0x99FFFFFF)),
+                SizedBox(width: 10 * s),
+                Expanded(
+                  child: Text(status,
                       style: TextStyle(
-                          fontSize: 22 * s,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white)),
-                  Container(
-                    padding:
-                        EdgeInsets.symmetric(horizontal: 14 * s, vertical: 6 * s),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: statusColor),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8 * s,
-                          height: 8 * s,
-                          decoration: BoxDecoration(
-                              shape: BoxShape.circle, color: statusColor),
-                        ),
-                        SizedBox(width: 8 * s),
-                        Text(status,
-                            style: TextStyle(
-                                fontSize: 14 * s,
-                                fontWeight: FontWeight.w600,
-                                color: statusColor)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Row(
-                children: [
-                  Icon(on ? Icons.lightbulb : Icons.lightbulb_outline,
-                      size: 20 * s,
-                      color:
-                          on ? const Color(0xFFE0C24B) : const Color(0x99FFFFFF)),
-                  SizedBox(width: 10 * s),
-                  Expanded(
-                    child: Text(_busy ? 'Updating…' : 'Tap to toggle',
-                        style: TextStyle(
-                            fontSize: 15 * s, color: const Color(0x99FFFFFF))),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                          fontSize: 15 * s, color: const Color(0xCCFFFFFF))),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

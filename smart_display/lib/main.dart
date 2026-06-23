@@ -255,6 +255,114 @@ class WeatherScope extends InheritedNotifier<WeatherController> {
           .notifier!;
 }
 
+// ── Brightness schedule ──────────────────────────────────────────────────────
+// Hard rule for now: 5% from 10 PM to 6 AM, full brightness otherwise.
+// Writes the DSI backlight directly (the user is in the `video` group via the
+// udev rule configure.sh installs). No-ops on machines without a backlight.
+class BrightnessController {
+  Timer? _timer;
+  int? _lastPct;
+
+  void start() {
+    _apply();
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _apply());
+  }
+
+  void stop() => _timer?.cancel();
+
+  Future<void> _apply() async {
+    final h = DateTime.now().hour;
+    final pct = (h >= 22 || h < 6) ? 5 : 100;
+    if (pct == _lastPct) return;
+    _lastPct = pct;
+    try {
+      final dir = Directory('/sys/class/backlight');
+      if (!dir.existsSync()) return;
+      final lights = dir.listSync();
+      if (lights.isEmpty) return;
+      final bl = lights.first.path;
+      final max = int.parse(
+          (await File('$bl/max_brightness').readAsString()).trim());
+      final val = (max * pct / 100).round().clamp(1, max);
+      await File('$bl/brightness').writeAsString('$val');
+    } catch (_) {/* no backlight / not permitted — ignore */}
+  }
+}
+
+// ── Home Assistant ───────────────────────────────────────────────────────────
+// Entity to drive in the first tie-in test. Set this to a real entity on the Pi
+// (e.g. light.jakes_room). configure.sh writes the URL+token the client reads.
+const String kHaTestEntity = 'light.jakes_room';
+
+class HaClient {
+  String? _url;
+  String? _token;
+  bool get ready => _url != null && _token != null;
+
+  Future<void> load() async {
+    try {
+      final home = Platform.environment['HOME'];
+      final f = File('$home/.config/smart-display/ha.json');
+      if (!f.existsSync()) return;
+      final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+      final url = (j['url'] as String?)?.trim();
+      final token = (j['token'] as String?)?.trim();
+      if (url != null && url.isNotEmpty && token != null && token.isNotEmpty) {
+        _url = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+        _token = token;
+      }
+    } catch (_) {/* leave unconfigured */}
+  }
+
+  Future<Map<String, dynamic>?> state(String entityId) async {
+    if (!ready) return null;
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 5);
+      final req = await client.getUrl(Uri.parse('$_url/api/states/$entityId'));
+      req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      final resp = await req.close();
+      final body = await resp.transform(utf8.decoder).join();
+      client.close();
+      if (resp.statusCode != 200) return null;
+      return jsonDecode(body) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> callService(
+      String domain, String service, String entityId) async {
+    if (!ready) return false;
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 5);
+      final req =
+          await client.postUrl(Uri.parse('$_url/api/services/$domain/$service'));
+      req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({'entity_id': entityId})));
+      final resp = await req.close();
+      await resp.drain<void>(null);
+      client.close();
+      return resp.statusCode == 200 || resp.statusCode == 201;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+class HaScope extends InheritedWidget {
+  final HaClient client;
+  const HaScope({super.key, required this.client, required super.child});
+
+  static HaClient of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<HaScope>()!.client;
+
+  @override
+  bool updateShouldNotify(HaScope old) => client != old.client;
+}
+
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -270,6 +378,8 @@ class _RootShellState extends State<RootShell>
 
   late final AnimationController _clock;
   final WeatherController _weather = WeatherController();
+  final HaClient _ha = HaClient();
+  final BrightnessController _brightness = BrightnessController();
   Timer? _idleTimer;
   bool _idle = false;
 
@@ -281,12 +391,15 @@ class _RootShellState extends State<RootShell>
       duration: const Duration(seconds: 24),
     )..repeat();
     _weather.start();
+    _ha.load();
+    _brightness.start();
     _resetIdleTimer();
   }
 
   @override
   void dispose() {
     _idleTimer?.cancel();
+    _brightness.stop();
     _weather.dispose();
     _clock.dispose();
     super.dispose();
@@ -306,7 +419,9 @@ class _RootShellState extends State<RootShell>
 
   @override
   Widget build(BuildContext context) {
-    return WeatherScope(
+    return HaScope(
+      client: _ha,
+      child: WeatherScope(
       controller: _weather,
       child: GlassClock(
       clock: _clock,
@@ -314,7 +429,9 @@ class _RootShellState extends State<RootShell>
         behavior: HitTestBehavior.translucent,
         onPointerDown: _onActivity,
         onPointerMove: _onActivity,
-        child: Scaffold(
+        child: MouseRegion(
+          cursor: SystemMouseCursors.none,
+          child: Scaffold(
           backgroundColor: const Color(0xFF06080F),
           body: Stack(
             fit: StackFit.expand,
@@ -343,6 +460,8 @@ class _RootShellState extends State<RootShell>
             ],
           ),
         ),
+        ),
+      ),
       ),
       ),
     );
@@ -526,8 +645,10 @@ class WeatherCard extends StatelessWidget {
 
 /// Resolution-independent scale: everything sizes off the display width so the
 /// same code looks right on this monitor and on the Pi's screen.
+// Resolution-independent scale. Baselined so text is comfortably large on the
+// Pi's display; clamps keep it sane on very small or very large screens.
 double _scale(BuildContext c) =>
-    (MediaQuery.sizeOf(c).width / 1600).clamp(0.6, 1.6);
+    (MediaQuery.sizeOf(c).width / 1100).clamp(0.9, 2.4);
 
 const _weekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const _month = [
@@ -535,92 +656,123 @@ const _month = [
   'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',
 ];
 
-class DashboardScreen extends StatelessWidget {
+/// Swipe-first dashboard: no nav bar, just horizontally swipeable pages with a
+/// small page indicator. Page 0 is the Overview; the rest are placeholders for
+/// now (floors/energy/printer).
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final s = _scale(context);
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.all(24 * s),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const NavChips(),
-            SizedBox(height: 18 * s),
-            const Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(flex: 5, child: _LeftColumn()),
-                  SizedBox(width: 18),
-                  Expanded(flex: 5, child: _RightColumn()),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class NavChips extends StatelessWidget {
-  const NavChips({super.key});
+class _DashboardScreenState extends State<DashboardScreen> {
+  final _pc = PageController();
+  int _page = 0;
 
-  static const _items = [
-    (Icons.grid_view_rounded, 'Overview'),
-    (Icons.home_rounded, 'First Floor'),
-    (Icons.weekend_rounded, 'Second Floor'),
-    (Icons.bed_rounded, 'Third Floor'),
-    (Icons.bolt_rounded, 'Energy'),
-    (Icons.print_rounded, '3D Printer'),
+  static const _pages = <Widget>[
+    OverviewPage(),
+    FloorPage(title: 'First Floor', icon: Icons.home_rounded),
+    FloorPage(title: 'Second Floor', icon: Icons.weekend_rounded),
+    FloorPage(title: '3D Printer', icon: Icons.print_rounded),
   ];
 
   @override
+  void dispose() {
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final s = _scale(context);
-    return SizedBox(
-      height: 50 * s,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _items.length,
-        separatorBuilder: (_, _) => SizedBox(width: 12 * s),
-        itemBuilder: (_, i) =>
-            _NavChip(icon: _items[i].$1, label: _items[i].$2, active: i == 0),
+    return SafeArea(
+      child: Stack(
+        children: [
+          PageView(
+            controller: _pc,
+            onPageChanged: (i) => setState(() => _page = i),
+            children: _pages,
+          ),
+          Positioned(
+            bottom: 14,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_pages.length, (i) {
+                final active = i == _page;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: active ? 20 : 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: Color(active ? 0xD9FFFFFF : 0x40FFFFFF),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _NavChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool active;
-  const _NavChip(
-      {required this.icon, required this.label, required this.active});
+class OverviewPage extends StatelessWidget {
+  const OverviewPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 18 * s),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(25 * s),
-        color: Color(active ? 0x24FFFFFF : 0x0FFFFFFF),
-        border: Border.all(color: Color(active ? 0x59FFFFFF : 0x1FFFFFFF)),
-      ),
-      child: Row(
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24 * s, 24 * s, 24 * s, 30 * s),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, size: 18 * s, color: Colors.white),
-          SizedBox(width: 8 * s),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 15 * s,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white)),
+          Expanded(flex: 5, child: _LeftColumn()),
+          SizedBox(width: 18),
+          Expanded(flex: 5, child: _RightColumn()),
         ],
+      ),
+    );
+  }
+}
+
+class FloorPage extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  const FloorPage({super.key, required this.title, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _scale(context);
+    return Padding(
+      padding: EdgeInsets.all(24 * s),
+      child: Center(
+        child: LiquidGlass(
+          radius: 22,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 40 * s),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 48 * s, color: const Color(0xCCFFFFFF)),
+                SizedBox(height: 16 * s),
+                Text(title,
+                    style: TextStyle(
+                        fontSize: 28 * s,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white)),
+                SizedBox(height: 6 * s),
+                Text('Coming soon',
+                    style: TextStyle(
+                        fontSize: 15 * s, color: const Color(0x99FFFFFF))),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -888,66 +1040,128 @@ class CalendarCard extends StatelessWidget {
   }
 }
 
-class RoomCard extends StatelessWidget {
+/// First Home Assistant tie-in: a live light toggle bound to [kHaTestEntity].
+/// Reflects real on/off state (polled) and toggles via the HA REST API.
+class RoomCard extends StatefulWidget {
   const RoomCard({super.key});
+
+  @override
+  State<RoomCard> createState() => _RoomCardState();
+}
+
+class _RoomCardState extends State<RoomCard> {
+  Map<String, dynamic>? _state;
+  bool _started = false;
+  bool _busy = false;
+  Timer? _poll;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    _refresh();
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final ha = HaScope.of(context);
+    if (!ha.ready) return;
+    final s = await ha.state(kHaTestEntity);
+    if (mounted) setState(() => _state = s);
+  }
+
+  Future<void> _toggle() async {
+    final ha = HaScope.of(context);
+    if (!ha.ready || _busy) return;
+    setState(() => _busy = true);
+    await ha.callService(kHaTestEntity.split('.').first, 'toggle', kHaTestEntity);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await _refresh();
+    if (mounted) setState(() => _busy = false);
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
-    return LiquidGlass(
-      radius: 20,
-      child: Padding(
-        padding: EdgeInsets.all(22 * s),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text("Jake's Room",
-                    style: TextStyle(
-                        fontSize: 22 * s,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white)),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 14 * s, vertical: 6 * s),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFE0A53B)),
+    final ha = HaScope.of(context);
+    final on = _state?['state'] == 'on';
+    final name = (_state?['attributes'] as Map?)?['friendly_name'] as String? ??
+        "Jake's Room";
+    final status = !ha.ready
+        ? 'HA not configured'
+        : _state == null
+            ? 'Connecting…'
+            : (on ? 'On' : 'Off');
+    final statusColor = on ? const Color(0xFF49E07A) : const Color(0x99FFFFFF);
+
+    return GestureDetector(
+      onTap: _toggle,
+      child: LiquidGlass(
+        radius: 20,
+        child: Padding(
+          padding: EdgeInsets.all(22 * s),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(name,
+                      style: TextStyle(
+                          fontSize: 22 * s,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                  Container(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 14 * s, vertical: 6 * s),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: statusColor),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8 * s,
+                          height: 8 * s,
+                          decoration: BoxDecoration(
+                              shape: BoxShape.circle, color: statusColor),
+                        ),
+                        SizedBox(width: 8 * s),
+                        Text(status,
+                            style: TextStyle(
+                                fontSize: 14 * s,
+                                fontWeight: FontWeight.w600,
+                                color: statusColor)),
+                      ],
+                    ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8 * s,
-                        height: 8 * s,
-                        decoration: const BoxDecoration(
-                            shape: BoxShape.circle, color: Color(0xFFE0A53B)),
-                      ),
-                      SizedBox(width: 8 * s),
-                      Text('Muted',
-                          style: TextStyle(
-                              fontSize: 14 * s,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFFE0A53B))),
-                    ],
+                ],
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Icon(on ? Icons.lightbulb : Icons.lightbulb_outline,
+                      size: 20 * s,
+                      color:
+                          on ? const Color(0xFFE0C24B) : const Color(0x99FFFFFF)),
+                  SizedBox(width: 10 * s),
+                  Expanded(
+                    child: Text(_busy ? 'Updating…' : 'Tap to toggle',
+                        style: TextStyle(
+                            fontSize: 15 * s, color: const Color(0x99FFFFFF))),
                   ),
-                ),
-              ],
-            ),
-            const Spacer(),
-            Row(
-              children: [
-                Icon(Icons.speaker_rounded,
-                    size: 20 * s, color: const Color(0x99FFFFFF)),
-                SizedBox(width: 10 * s),
-                Text('Speaker · Idle',
-                    style: TextStyle(
-                        fontSize: 15 * s, color: const Color(0x99FFFFFF))),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

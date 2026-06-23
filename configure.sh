@@ -1082,6 +1082,15 @@ pkill -f idle-watch.sh 2>/dev/null || true
 pkill -f idle_screen.py 2>/dev/null || true
 pkill swayidle 2>/dev/null || true
 
+# Home Assistant credentials for the Flutter app. /etc/smart-display/assistant.env
+# is root-only (mode 600), so the display app reads this user-owned copy instead.
+info "Writing Home Assistant config for the display app..."
+mkdir -p "$CURRENT_HOME/.config/smart-display"
+cat > "$CURRENT_HOME/.config/smart-display/ha.json" <<HAEOF
+{"url": "$HA_SERVER", "token": "$HOME_ASSISTANT_TOKEN"}
+HAEOF
+chmod 600 "$CURRENT_HOME/.config/smart-display/ha.json"
+
 if [ ! -d "$FLUTTER_APP_SRC" ]; then
     warn "smart_display/ not found next to configure.sh — skipping Flutter shell."
     warn "Pull the latest repo (cd ~/TuneoutDisplay && git pull) and re-run."

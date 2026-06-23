@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes;
 import 'package:flutter/material.dart';
 
 /// Loaded once at startup; null if the GPU/back-end can't compile it, in which
@@ -343,6 +345,28 @@ class HaClient {
         ? u.replaceFirst('https', 'wss')
         : u.replaceFirst('http', 'ws');
     return '$ws/api/websocket';
+  }
+
+  /// Current still frame for a camera entity (works for any HA camera).
+  Future<Uint8List?> cameraSnapshot(String entityId) async {
+    if (!ready) return null;
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 8);
+      final req =
+          await client.getUrl(Uri.parse('$_url/api/camera_proxy/$entityId'));
+      req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      final resp = await req.close();
+      if (resp.statusCode != 200) {
+        client.close();
+        return null;
+      }
+      final bytes = await consolidateHttpClientResponseBytes(resp);
+      client.close();
+      return bytes;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// All current entity states (snapshot).
@@ -1207,66 +1231,130 @@ class _WeatherStrip extends StatelessWidget {
   }
 }
 
-/// Camera stays more solid than the glass cards (per the design direction).
-/// Placeholder feed for the mockup; the real HA stream slots in later.
-class CameraCard extends StatelessWidget {
+/// Universal camera tile: shows a periodically-refreshed snapshot from any HA
+/// camera entity (via /api/camera_proxy). Cheap and codec-agnostic — the live
+/// hardware-decoded stream is a future tap-to-focus mode. Camera stays more
+/// solid than the glass cards (per the design direction).
+class CameraCard extends StatefulWidget {
   const CameraCard({super.key});
+
+  @override
+  State<CameraCard> createState() => _CameraCardState();
+}
+
+class _CameraCardState extends State<CameraCard> {
+  Timer? _timer;
+  Uint8List? _frame;
+  String? _name;
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    _tick();
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  /// Auto-pick a camera entity — prefer a door/front camera, else the first one.
+  String? _pickCamera(EntityCatalog cat) {
+    String? first;
+    for (final e in cat.all) {
+      if (!e.key.startsWith('camera.')) continue;
+      first ??= e.key;
+      final fn =
+          ((e.value['attributes'] as Map?)?['friendly_name'] as String? ?? e.key)
+              .toLowerCase();
+      if (e.key.contains('door') ||
+          e.key.contains('front') ||
+          fn.contains('door') ||
+          fn.contains('front')) {
+        return e.key;
+      }
+    }
+    return first;
+  }
+
+  Future<void> _tick() async {
+    if (!mounted) return;
+    final ha = HaScope.of(context);
+    final cat = EntityScope.of(context);
+    if (!ha.ready) return;
+    final id = _pickCamera(cat);
+    if (id == null) return;
+    final bytes = await ha.cameraSnapshot(id);
+    if (!mounted || bytes == null) return;
+    setState(() {
+      _frame = bytes;
+      _name = (cat.state(id)?['attributes'] as Map?)?['friendly_name'] as String?;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
     final r = BorderRadius.circular(18);
-    // RepaintBoundary keeps the camera its own layer — when the live feed
-    // updates it won't repaint the rest of the UI, and vice versa.
+    // RepaintBoundary keeps the camera its own layer — when the feed updates it
+    // won't repaint the rest of the UI, and vice versa.
     return RepaintBoundary(
       child: ClipRRect(
-      borderRadius: r,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF1B2A3A), Color(0xFF0B131C)],
-          ),
-          border: Border.all(color: const Color(0x1FFFFFFF)),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Center(
-              child: Icon(Icons.videocam_rounded,
-                  size: 64 * s, color: const Color(0x33FFFFFF)),
+        borderRadius: r,
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF1B2A3A), Color(0xFF0B131C)],
             ),
-            Positioned(
-              left: 12 * s,
-              top: 10 * s,
-              child: ClockText(
-                builder: (_, now) => Text(
-                  '${now.year}-${now.month.toString().padLeft(2, '0')}-'
-                  '${now.day.toString().padLeft(2, '0')}  ${_hourMinuteAmPm(now)}',
-                  style: TextStyle(
-                      fontSize: 12 * s,
-                      color: const Color(0xCCFFFFFF),
-                      shadows: const [Shadow(blurRadius: 4)]),
+            border: Border.all(color: const Color(0x1FFFFFFF)),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (_frame != null)
+                Image.memory(_frame!, fit: BoxFit.cover, gaplessPlayback: true)
+              else
+                Center(
+                  child: Icon(Icons.videocam_rounded,
+                      size: 64 * s, color: const Color(0x33FFFFFF)),
+                ),
+              Positioned(
+                left: 12 * s,
+                top: 10 * s,
+                child: ClockText(
+                  builder: (_, now) => Text(
+                    '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+                    '${now.day.toString().padLeft(2, '0')}  ${_hourMinuteAmPm(now)}',
+                    style: TextStyle(
+                        fontSize: 12 * s,
+                        color: const Color(0xCCFFFFFF),
+                        shadows: const [Shadow(blurRadius: 4)]),
+                  ),
                 ),
               ),
-            ),
-            Positioned(
-              bottom: 14 * s,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Text('Front Door',
-                    style: TextStyle(
-                        fontSize: 22 * s,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                        shadows: const [Shadow(blurRadius: 8)])),
+              Positioned(
+                bottom: 14 * s,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Text(_name ?? 'Front Door',
+                      style: TextStyle(
+                          fontSize: 22 * s,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                          shadows: const [Shadow(blurRadius: 8)])),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
       ),
     );
   }

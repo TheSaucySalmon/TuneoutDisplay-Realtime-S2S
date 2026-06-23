@@ -661,6 +661,7 @@ class _RootShellState extends State<RootShell> {
   static const _fade = Duration(milliseconds: 700);
 
   final FrameClock _clock = FrameClock();
+  final BgTexture _bgTex = BgTexture();
   final WeatherController _weather = WeatherController();
   final HaClient _ha = HaClient();
   final EntityCatalog _catalog = EntityCatalog();
@@ -689,6 +690,7 @@ class _RootShellState extends State<RootShell> {
     _catalog.dispose();
     _weather.dispose();
     _clock.dispose();
+    _bgTex.image?.dispose();
     super.dispose();
   }
 
@@ -738,6 +740,8 @@ class _RootShellState extends State<RootShell> {
       controller: _weather,
       child: GlassClock(
       clock: _clock,
+      child: BgTextureScope(
+      holder: _bgTex,
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: _onActivity,
@@ -788,6 +792,7 @@ class _RootShellState extends State<RootShell> {
         ),
         ),
         ),
+      ),
       ),
       ),
       ),
@@ -1493,7 +1498,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
             painter: _GlassPainter(
               program: glassProgram!,
               repaint: clock,
-              time: clock,
+              holder: BgTextureScope.of(context),
               screen: screen,
               radius: radius,
               thickness: cfg.intensity,
@@ -1552,7 +1557,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
 
 class _GlassPainter extends CustomPainter {
   final ui.FragmentProgram program;
-  final FrameClock time;
+  final BgTexture holder;
   final Size screen;
   final double radius;
   final double thickness;
@@ -1561,7 +1566,7 @@ class _GlassPainter extends CustomPainter {
   _GlassPainter({
     required this.program,
     required Listenable repaint,
-    required this.time,
+    required this.holder,
     required this.screen,
     required this.radius,
     required this.thickness,
@@ -1570,6 +1575,10 @@ class _GlassPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // The background painter (drawn earlier this frame) produced the snapshot.
+    final tex = holder.image;
+    if (tex == null) return;
+
     // Where this card currently sits on screen (tracks page-swipe motion).
     var offset = Offset.zero;
     final ctx = paintKey.currentContext;
@@ -1587,9 +1596,9 @@ class _GlassPainter extends CustomPainter {
       ..setFloat(4, size.width)
       ..setFloat(5, size.height)
       ..setFloat(6, radius)
-      ..setFloat(7, time.value)
-      ..setFloat(8, thickness)
-      ..setFloat(9, -2.0);
+      ..setFloat(7, thickness)
+      ..setFloat(8, -2.0)
+      ..setImageSampler(0, tex);
 
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
@@ -1607,83 +1616,118 @@ class IdleBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final clock = GlassClock.of(context);
-    return AnimatedBuilder(
-      animation: clock,
-      builder: (_, _) =>
-          CustomPaint(painter: _IdleWavesPainter(clock.value), size: Size.infinite),
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _ScenePainter(
+            clock: clock, draw: (c, s) => paintWaves(c, s, clock.value)),
+        size: Size.infinite,
+      ),
     );
   }
 }
 
-class _IdleWavesPainter extends CustomPainter {
-  final double t;
-  _IdleWavesPainter(this.t);
+/// Generic animated-scene painter: repaints on the [clock] and delegates the
+/// actual drawing to [draw].
+class _ScenePainter extends CustomPainter {
+  final FrameClock clock;
+  final void Function(Canvas, Size) draw;
+  _ScenePainter({required this.clock, required this.draw}) : super(repaint: clock);
 
-  // (baseFrac, ampFrac, color) for each aurora band.
-  static const _layers = [
+  @override
+  void paint(Canvas canvas, Size size) => draw(canvas, size);
+
+  @override
+  bool shouldRepaint(covariant _ScenePainter old) => true;
+}
+
+// ── Background scenes (shared by the on-screen paint and the glass texture) ───
+
+void paintGlow(Canvas canvas, Size size, double t) {
+  canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF06080F));
+  final tau = 2 * math.pi;
+  void blob(Color color, double cx, double cy, double rad) {
+    final center = Offset(cx * size.width, cy * size.height);
+    canvas.drawCircle(
+      center,
+      rad,
+      Paint()
+        ..shader = RadialGradient(colors: [color, color.withValues(alpha: 0)])
+            .createShader(Rect.fromCircle(center: center, radius: rad)),
+    );
+  }
+
+  blob(const Color(0x662E6BFF), 0.25 + 0.10 * math.sin(t * tau),
+      0.30 + 0.06 * math.cos(t * tau), size.shortestSide * 0.7);
+  blob(const Color(0x4DFF8A3D), 0.80 + 0.08 * math.cos(t * tau),
+      0.70 + 0.07 * math.sin(t * tau), size.shortestSide * 0.6);
+  blob(const Color(0x3322D3A8), 0.55 + 0.06 * math.sin(t * tau + 1.5),
+      0.85 + 0.05 * math.cos(t * tau + 1.5), size.shortestSide * 0.5);
+}
+
+void paintWaves(Canvas canvas, Size size, double t) {
+  final w = size.width, h = size.height;
+  const tau = 2 * math.pi;
+  const layers = [
     (0.18, 0.026, Color(0xFF0B2631)),
     (0.285, 0.036, Color(0xFF0D3144)),
     (0.39, 0.046, Color(0xFF08202E)),
   ];
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width, h = size.height;
-    const tau = 2 * math.pi;
+  canvas.drawRect(
+    Offset.zero & size,
+    Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF04080E), Color(0xFF0C1A2C)],
+      ).createShader(Offset.zero & size),
+  );
 
-    // Deep navy vertical gradient base.
-    canvas.drawRect(
-      Offset.zero & size,
+  for (var li = 0; li < layers.length; li++) {
+    final (baseFrac, ampFrac, color) = layers[li];
+    final baseY = h * baseFrac;
+    final amp = h * ampFrac;
+    final phase = t * tau * (li + 1);
+    final path = Path();
+    const n = 64;
+    for (var i = 0; i <= n; i++) {
+      final x = w * i / n;
+      final y = baseY + math.sin(i * 0.82 * 9 / n + phase) * amp;
+      i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+    }
+    canvas.drawPath(
+      path,
       Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF04080E), Color(0xFF0C1A2C)],
-        ).createShader(Offset.zero & size),
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(12, h * 0.045)
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
     );
-
-    // Aurora waves: thick, soft, smoothly drifting sine bands.
-    for (var li = 0; li < _layers.length; li++) {
-      final (baseFrac, ampFrac, color) = _layers[li];
-      final baseY = h * baseFrac;
-      final amp = h * ampFrac;
-      final phase = t * tau * (li + 1); // integer cycles → seamless loop
-      final path = Path();
-      const n = 64;
-      for (var i = 0; i <= n; i++) {
-        final x = w * i / n;
-        final y = baseY + math.sin(i * 0.82 * 9 / n + phase) * amp;
-        i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
-      }
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(12, h * 0.045)
-          ..strokeCap = StrokeCap.round
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-      );
-    }
-
-    // Drifting stars.
-    final starMax = math.max(80, (h * 0.55).toInt());
-    for (var i = 0; i < 12; i++) {
-      final x = (i * 137 + t * w * 2) % w;
-      final y = 35 + (i * 53) % starMax;
-      final pulse = (math.sin(t * tau * 3 + i) + 1) / 2;
-      final color =
-          pulse < 0.65 ? const Color(0xFF173849) : const Color(0xFF24586B);
-      canvas.drawCircle(
-        Offset(x, y.toDouble()),
-        i % 4 == 0 ? 2 : 1,
-        Paint()..color = color,
-      );
-    }
   }
 
-  @override
-  bool shouldRepaint(covariant _IdleWavesPainter old) => old.t != t;
+  final starMax = math.max(80, (h * 0.55).toInt());
+  for (var i = 0; i < 12; i++) {
+    final x = (i * 137 + t * w * 2) % w;
+    final y = 35 + (i * 53) % starMax;
+    final pulse = (math.sin(t * tau * 3 + i) + 1) / 2;
+    final color =
+        pulse < 0.65 ? const Color(0xFF173849) : const Color(0xFF24586B);
+    canvas.drawCircle(
+        Offset(x, y.toDouble()), i % 4 == 0 ? 2 : 1, Paint()..color = color);
+  }
+}
+
+void paintSolid(Canvas canvas, Size size, Color top, Color bottom) {
+  canvas.drawRect(
+    Offset.zero & size,
+    Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [top, bottom],
+      ).createShader(Offset.zero & size),
+  );
 }
 
 /// Live customization panel (entered by swiping up). Mutates [AppConfig], which
@@ -1864,76 +1908,82 @@ class _SwatchRow extends StatelessWidget {
 }
 
 /// Renders whichever background the user picked in edit mode.
+/// Holds the latest low-res snapshot of the background for the glass shader to
+/// sample. Shared (one instance) between the background painter that writes it
+/// and the glass painters that read it within the same frame.
+class BgTexture {
+  ui.Image? image;
+}
+
+class BgTextureScope extends InheritedWidget {
+  final BgTexture holder;
+  const BgTextureScope({super.key, required this.holder, required super.child});
+
+  static BgTexture of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<BgTextureScope>()!.holder;
+
+  @override
+  bool updateShouldNotify(BgTextureScope old) => holder != old.holder;
+}
+
+/// Draws the chosen background to the screen AND renders a small snapshot of it
+/// into [BgTexture] each frame, so the liquid-glass shader can refract it with a
+/// cheap texture read instead of recomputing the whole field per pixel.
 class ConfiguredBackground extends StatelessWidget {
   const ConfiguredBackground({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final cfg = ConfigScope.of(context);
-    switch (cfg.bg) {
-      case BgType.glow:
-        return const AnimatedBackground();
-      case BgType.waves:
-        return const IdleBackground();
-      case BgType.solid:
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                cfg.bgColor,
-                Color.lerp(cfg.bgColor, Colors.black, 0.45)!,
-              ],
-            ),
-          ),
-        );
-    }
-  }
-}
-
-class AnimatedBackground extends StatelessWidget {
-  const AnimatedBackground({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final clock = GlassClock.of(context);
-    return AnimatedBuilder(
-      animation: clock,
-      builder: (_, _) =>
-          CustomPaint(painter: _GlowPainter(clock.value), size: Size.infinite),
+    return CustomPaint(
+      painter: _BackgroundPainter(
+        clock: GlassClock.of(context),
+        cfg: ConfigScope.of(context),
+        holder: BgTextureScope.of(context),
+      ),
+      size: Size.infinite,
     );
   }
 }
 
-class _GlowPainter extends CustomPainter {
-  final double t;
-  _GlowPainter(this.t);
+class _BackgroundPainter extends CustomPainter {
+  final FrameClock clock;
+  final AppConfig cfg;
+  final BgTexture holder;
+  _BackgroundPainter({
+    required this.clock,
+    required this.cfg,
+    required this.holder,
+  }) : super(repaint: clock);
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF06080F));
-    final tau = 2 * math.pi;
-
-    void blob(Color color, double cx, double cy, double rad) {
-      final center = Offset(cx * size.width, cy * size.height);
-      canvas.drawCircle(
-        center,
-        rad,
-        Paint()
-          ..shader = RadialGradient(colors: [color, color.withValues(alpha: 0)])
-              .createShader(Rect.fromCircle(center: center, radius: rad)),
-      );
+  void _scene(Canvas canvas, Size size) {
+    switch (cfg.bg) {
+      case BgType.glow:
+        paintGlow(canvas, size, clock.value);
+      case BgType.waves:
+        paintWaves(canvas, size, clock.value);
+      case BgType.solid:
+        paintSolid(canvas, size, cfg.bgColor,
+            Color.lerp(cfg.bgColor, Colors.black, 0.45)!);
     }
-
-    blob(const Color(0x662E6BFF), 0.25 + 0.10 * math.sin(t * tau),
-        0.30 + 0.06 * math.cos(t * tau), size.shortestSide * 0.7);
-    blob(const Color(0x4DFF8A3D), 0.80 + 0.08 * math.cos(t * tau),
-        0.70 + 0.07 * math.sin(t * tau), size.shortestSide * 0.6);
-    blob(const Color(0x3322D3A8), 0.55 + 0.06 * math.sin(t * tau + 1.5),
-        0.85 + 0.05 * math.cos(t * tau + 1.5), size.shortestSide * 0.5);
   }
 
   @override
-  bool shouldRepaint(covariant _GlowPainter old) => old.t != t;
+  void paint(Canvas canvas, Size size) {
+    _scene(canvas, size); // full-res, to the screen
+
+    if (size.width <= 0 || size.height <= 0) return;
+    // Low-res copy for the shader. The background is low-frequency, so a small
+    // texture refracts identically while costing a texture read, not a recompute.
+    const tw = 480;
+    final th = (tw * size.height / size.width).round().clamp(1, 2160);
+    final recorder = ui.PictureRecorder();
+    final tc = Canvas(recorder)..scale(tw / size.width, th / size.height);
+    _scene(tc, size);
+    final img = recorder.endRecording().toImageSync(tw, th);
+    holder.image?.dispose();
+    holder.image = img;
+  }
+
+  @override
+  bool shouldRepaint(covariant _BackgroundPainter old) => true;
 }

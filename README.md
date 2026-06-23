@@ -26,6 +26,17 @@ Just like the original author, I only work on this project in my spare time. I'm
 | Speaker | 3W 8 ohm (Recommended, USB device works fine too.) |
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
 | Compositor | Not a clue |
+| Cooling | **Active cooling required** (see below) |
+
+> [!IMPORTANT]
+> **Active cooling is required, not optional.** The Raspberry Pi 5 runs hot, and
+> this project drives a continuously-rendered display alongside an always-on
+> wake-word assistant. With no heatsink/fan the board reaches ~85 °C and
+> thermally throttles (slowing everything down). Use the official **Raspberry Pi
+> 5 Active Cooler**, or any fan + heatsink / actively-cooled case, and make sure
+> the enclosure has airflow. Check temps with `vcgencmd measure_temp` and
+> `vcgencmd get_throttled` (`throttled=0x0` and temps in the 50s–60s °C are
+> healthy; sustained 80 °C+ means it's throttling).
 
 This repo currently supports both `seeed_2mic_hat` / WM8960 setups and `generic_usb` setups using USB microphones and USB speakers/headsets.
 

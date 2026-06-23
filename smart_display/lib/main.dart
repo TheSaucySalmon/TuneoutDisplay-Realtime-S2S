@@ -66,7 +66,10 @@ class FrameClock extends ChangeNotifier {
   Timer? _timer;
   FrameClock({this.periodSeconds = 24});
 
+  /// Tick continuously at [kTargetFps]. Paused (see [stop]) while the idle
+  /// screensaver is showing, so nothing animates during the long idle hours.
   void start() {
+    _timer?.cancel();
     final inc = (1.0 / kTargetFps) / periodSeconds;
     _timer = Timer.periodic(
       Duration(milliseconds: (1000 / kTargetFps).round()),
@@ -721,12 +724,20 @@ class _RootShellState extends State<RootShell> {
   void _resetIdleTimer() {
     _idleTimer?.cancel();
     _idleTimer = Timer(_idleAfter, () {
-      if (mounted) setState(() => _idle = true);
+      if (!mounted) return;
+      // Idle screen is static, so freeze the animation clock entirely — the
+      // hidden dashboard stops animating too. Near-zero GPU during idle hours.
+      // (The live time display runs on its own timer and keeps updating.)
+      setState(() => _idle = true);
+      _clock.stop();
     });
   }
 
   void _onActivity(PointerEvent _) {
-    if (_idle) setState(() => _idle = false);
+    if (_idle) {
+      setState(() => _idle = false);
+      _clock.start(); // resume dashboard animation on wake
+    }
     if (!_editing) _resetIdleTimer();
   }
 
@@ -1704,34 +1715,34 @@ class _GlassPainter extends CustomPainter {
 /// Idle-screen background: the flowing aurora waves + drifting stars ported
 /// from the original idle-v13 screen, driven by the shared clock so the motion
 /// wraps seamlessly.
+/// Idle screen uses a STATIC aurora — painted once at a fixed phase and never
+/// repainted. Keeps the long idle hours at near-zero GPU. Future transient
+/// idle animations (notifications, AI speaking bar) will be their own small,
+/// on-demand layers rather than animating this whole background.
 class IdleBackground extends StatelessWidget {
   const IdleBackground({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final clock = GlassClock.of(context);
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _ScenePainter(
-            clock: clock, draw: (c, s) => paintWaves(c, s, clock.value)),
+        painter: _StaticScenePainter((c, s) => paintWaves(c, s, 0)),
         size: Size.infinite,
       ),
     );
   }
 }
 
-/// Generic animated-scene painter: repaints on the [clock] and delegates the
-/// actual drawing to [draw].
-class _ScenePainter extends CustomPainter {
-  final FrameClock clock;
+/// Paints a scene once and never repaints.
+class _StaticScenePainter extends CustomPainter {
   final void Function(Canvas, Size) draw;
-  _ScenePainter({required this.clock, required this.draw}) : super(repaint: clock);
+  _StaticScenePainter(this.draw);
 
   @override
   void paint(Canvas canvas, Size size) => draw(canvas, size);
 
   @override
-  bool shouldRepaint(covariant _ScenePainter old) => true;
+  bool shouldRepaint(covariant _StaticScenePainter old) => false;
 }
 
 // ── Background scenes (shared by the on-screen paint and the glass texture) ───

@@ -42,14 +42,46 @@ class SmartDisplayApp extends StatelessWidget {
 /// Exposes the shared animation clock so the background and every glass card
 /// refract the *same* moment of the glow field.
 class GlassClock extends InheritedWidget {
-  final Animation<double> clock;
+  final FrameClock clock;
   const GlassClock({super.key, required this.clock, required super.child});
 
-  static Animation<double> of(BuildContext context) =>
+  static FrameClock of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<GlassClock>()!.clock;
 
   @override
   bool updateShouldNotify(GlassClock old) => clock != old.clock;
+}
+
+/// Drives all looping animation from a single timer at a capped frame rate,
+/// instead of repainting every vsync (60 Hz). The motion is slow, so a lower
+/// cap looks identical while roughly halving continuous GPU/shader work.
+/// Bump [kTargetFps] back to 60 once the Pi has active cooling.
+const int kTargetFps = 30;
+
+class FrameClock extends ChangeNotifier {
+  double value = 0;
+  final double periodSeconds;
+  Timer? _timer;
+  FrameClock({this.periodSeconds = 24});
+
+  void start() {
+    final inc = (1.0 / kTargetFps) / periodSeconds;
+    _timer = Timer.periodic(
+      Duration(milliseconds: (1000 / kTargetFps).round()),
+      (_) {
+        value = (value + inc) % 1.0;
+        notifyListeners();
+      },
+    );
+  }
+
+  void stop() => _timer?.cancel();
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 }
 
 // ── Location (Bally, PA) — will become user-configurable later ───────────────
@@ -623,13 +655,12 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell>
-    with SingleTickerProviderStateMixin {
+class _RootShellState extends State<RootShell> {
   // Idle screensaver: fade in after this much inactivity; any touch wakes it.
   static const _idleAfter = Duration(minutes: 3);
   static const _fade = Duration(milliseconds: 700);
 
-  late final AnimationController _clock;
+  final FrameClock _clock = FrameClock();
   final WeatherController _weather = WeatherController();
   final HaClient _ha = HaClient();
   final EntityCatalog _catalog = EntityCatalog();
@@ -642,10 +673,7 @@ class _RootShellState extends State<RootShell>
   @override
   void initState() {
     super.initState();
-    _clock = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 24),
-    )..repeat();
+    _clock.start();
     _weather.start();
     _ha.load().then((_) {
       if (mounted) _catalog.start(_ha);
@@ -1524,7 +1552,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
 
 class _GlassPainter extends CustomPainter {
   final ui.FragmentProgram program;
-  final Animation<double> time;
+  final FrameClock time;
   final Size screen;
   final double radius;
   final double thickness;

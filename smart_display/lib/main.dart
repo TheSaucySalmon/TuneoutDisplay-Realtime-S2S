@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 /// Loaded once at startup; null if the GPU/back-end can't compile it, in which
 /// case [LiquidGlass] falls back to a plain frosted panel.
 ui.FragmentProgram? glassProgram;
+late AppConfig appConfig;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,6 +18,7 @@ Future<void> main() async {
   } catch (_) {
     glassProgram = null; // graceful fallback (e.g. if Pi can't run the shader)
   }
+  appConfig = await AppConfig.load();
   runApp(const SmartDisplayApp());
 }
 
@@ -25,11 +27,14 @@ class SmartDisplayApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Tuneout Display',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(brightness: Brightness.dark, fontFamily: 'SF Pro'),
-      home: const RootShell(),
+    return ConfigScope(
+      config: appConfig,
+      child: MaterialApp(
+        title: 'Tuneout Display',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(brightness: Brightness.dark, fontFamily: 'SF Pro'),
+        home: const RootShell(),
+      ),
     );
   }
 }
@@ -363,6 +368,90 @@ class HaScope extends InheritedWidget {
   bool updateShouldNotify(HaScope old) => client != old.client;
 }
 
+// ── User-customizable appearance (starter foundation) ────────────────────────
+// Everything visible is intended to be config-driven so the UI can be restyled
+// live in edit mode and persisted. This is the first slice; more properties
+// (per-element layout, fonts, etc.) build on the same model.
+enum BgType { glow, waves, solid }
+
+enum CardStyle { liquidGlass, frosted, solid, outline }
+
+class AppConfig extends ChangeNotifier {
+  BgType bg;
+  CardStyle cardStyle;
+  double intensity; // glass refraction / frost blur amount
+  double cornerRadius;
+  Color accent;
+  Color cardColor;
+  Color bgColor;
+
+  AppConfig({
+    this.bg = BgType.glow,
+    this.cardStyle = CardStyle.liquidGlass,
+    this.intensity = 22,
+    this.cornerRadius = 18,
+    this.accent = const Color(0xFF2E7BFF),
+    this.cardColor = const Color(0xFFFFFFFF),
+    this.bgColor = const Color(0xFF06080F),
+  });
+
+  static File get _file =>
+      File('${Platform.environment['HOME']}/.config/smart-display/theme.json');
+
+  static Future<AppConfig> load() async {
+    try {
+      final f = _file;
+      if (f.existsSync()) {
+        final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+        return AppConfig(
+          bg: BgType.values[(j['bg'] as num?)?.toInt() ?? 0],
+          cardStyle: CardStyle.values[(j['cardStyle'] as num?)?.toInt() ?? 0],
+          intensity: (j['intensity'] as num?)?.toDouble() ?? 22,
+          cornerRadius: (j['cornerRadius'] as num?)?.toDouble() ?? 18,
+          accent: Color((j['accent'] as num?)?.toInt() ?? 0xFF2E7BFF),
+          cardColor: Color((j['cardColor'] as num?)?.toInt() ?? 0xFFFFFFFF),
+          bgColor: Color((j['bgColor'] as num?)?.toInt() ?? 0xFF06080F),
+        );
+      }
+    } catch (_) {/* fall back to defaults */}
+    return AppConfig();
+  }
+
+  Future<void> save() async {
+    try {
+      final f = _file;
+      await f.parent.create(recursive: true);
+      await f.writeAsString(jsonEncode({
+        'bg': bg.index,
+        'cardStyle': cardStyle.index,
+        'intensity': intensity,
+        'cornerRadius': cornerRadius,
+        'accent': accent.toARGB32(),
+        'cardColor': cardColor.toARGB32(),
+        'bgColor': bgColor.toARGB32(),
+      }));
+    } catch (_) {/* ignore write errors */}
+  }
+
+  /// Mutate, notify listeners, and persist in one step.
+  void update(VoidCallback change) {
+    change();
+    notifyListeners();
+    save();
+  }
+}
+
+class ConfigScope extends InheritedNotifier<AppConfig> {
+  const ConfigScope({
+    super.key,
+    required AppConfig config,
+    required super.child,
+  }) : super(notifier: config);
+
+  static AppConfig of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ConfigScope>()!.notifier!;
+}
+
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -382,6 +471,8 @@ class _RootShellState extends State<RootShell>
   final BrightnessController _brightness = BrightnessController();
   Timer? _idleTimer;
   bool _idle = false;
+  bool _editing = false;
+  double _dragStartY = 0;
 
   @override
   void initState() {
@@ -414,7 +505,31 @@ class _RootShellState extends State<RootShell>
 
   void _onActivity(PointerEvent _) {
     if (_idle) setState(() => _idle = false);
+    if (!_editing) _resetIdleTimer();
+  }
+
+  void _openEdit() {
+    _idleTimer?.cancel(); // don't fall asleep while customizing
+    setState(() {
+      _idle = false;
+      _editing = true;
+    });
+  }
+
+  void _closeEdit() {
+    setState(() => _editing = false);
     _resetIdleTimer();
+  }
+
+  // Swipe up from the bottom edge → enter edit mode. Swipe down → exit.
+  void _onVerticalDragEnd(DragEndDetails d) {
+    final h = MediaQuery.sizeOf(context).height;
+    final v = d.primaryVelocity ?? 0;
+    if (!_editing && v < -300 && _dragStartY > h * 0.6) {
+      _openEdit();
+    } else if (_editing && v > 300) {
+      _closeEdit();
+    }
   }
 
   @override
@@ -431,12 +546,16 @@ class _RootShellState extends State<RootShell>
         onPointerMove: _onActivity,
         child: MouseRegion(
           cursor: SystemMouseCursors.none,
+          child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onVerticalDragStart: (d) => _dragStartY = d.globalPosition.dy,
+          onVerticalDragEnd: _onVerticalDragEnd,
           child: Scaffold(
           backgroundColor: const Color(0xFF06080F),
           body: Stack(
             fit: StackFit.expand,
             children: [
-              const AnimatedBackground(),
+              const ConfiguredBackground(),
               // Active UI and idle screen cross-fade over the shared
               // background — no hard cut, just a soft dissolve.
               IgnorePointer(
@@ -457,8 +576,18 @@ class _RootShellState extends State<RootShell>
                   child: const IdleScreen(),
                 ),
               ),
+              // Edit-mode panel slides up from the bottom.
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.easeOutCubic,
+                left: 0,
+                right: 0,
+                bottom: _editing ? 0 : -600,
+                child: EditPanel(onClose: _closeEdit),
+              ),
             ],
           ),
+        ),
         ),
         ),
       ),
@@ -707,7 +836,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   width: active ? 20 : 7,
                   height: 7,
                   decoration: BoxDecoration(
-                    color: Color(active ? 0xD9FFFFFF : 0x40FFFFFF),
+                    color: active
+                        ? ConfigScope.of(context).accent
+                        : const Color(0x40FFFFFF),
                     borderRadius: BorderRadius.circular(4),
                   ),
                 );
@@ -959,14 +1090,18 @@ class _ControlButton extends StatelessWidget {
       ),
     );
     if (primary) {
+      final accent = ConfigScope.of(context).accent;
       return DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF2E7BFF), Color(0xFF1E5FE0)],
+          gradient: LinearGradient(
+            colors: [accent, Color.lerp(accent, Colors.black, 0.25)!],
           ),
-          boxShadow: const [
-            BoxShadow(color: Color(0x552E7BFF), blurRadius: 18, offset: Offset(0, 6)),
+          boxShadow: [
+            BoxShadow(
+                color: accent.withValues(alpha: 0.33),
+                blurRadius: 18,
+                offset: const Offset(0, 6)),
           ],
         ),
         child: child,
@@ -1200,29 +1335,81 @@ class _LiquidGlassState extends State<LiquidGlass> {
 
   @override
   Widget build(BuildContext context) {
-    final program = glassProgram;
-    if (program == null || widget.forceFrosted) {
-      return _FrostedFallback(widget: widget);
+    final cfg = ConfigScope.of(context);
+    final radius = cfg.cornerRadius;
+    final r = BorderRadius.circular(radius);
+
+    // forceFrosted (idle weather card) always blurs the real background.
+    var style = widget.forceFrosted ? CardStyle.frosted : cfg.cardStyle;
+    if (style == CardStyle.liquidGlass && glassProgram == null) {
+      style = CardStyle.frosted;
     }
 
-    final clock = GlassClock.of(context);
-    final screen = MediaQuery.sizeOf(context);
-    return SizedBox(
-      height: widget.height,
-      child: CustomPaint(
-        key: _paintKey,
-        painter: _GlassPainter(
-          program: program,
-          repaint: clock,
-          time: clock,
-          screen: screen,
-          radius: widget.radius,
-          thickness: widget.thickness,
-          paintKey: _paintKey,
-        ),
-        child: widget.child,
-      ),
-    );
+    switch (style) {
+      case CardStyle.liquidGlass:
+        final clock = GlassClock.of(context);
+        final screen = MediaQuery.sizeOf(context);
+        return SizedBox(
+          height: widget.height,
+          child: CustomPaint(
+            key: _paintKey,
+            painter: _GlassPainter(
+              program: glassProgram!,
+              repaint: clock,
+              time: clock,
+              screen: screen,
+              radius: radius,
+              thickness: cfg.intensity,
+              paintKey: _paintKey,
+            ),
+            child: widget.child,
+          ),
+        );
+      case CardStyle.frosted:
+        return ClipRRect(
+          borderRadius: r,
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(
+                sigmaX: cfg.intensity, sigmaY: cfg.intensity),
+            child: Container(
+              height: widget.height,
+              decoration: BoxDecoration(
+                borderRadius: r,
+                color: cfg.cardColor.withValues(alpha: 0.12),
+                border: Border.all(color: const Color(0x26FFFFFF)),
+              ),
+              child: widget.child,
+            ),
+          ),
+        );
+      case CardStyle.solid:
+        return Container(
+          height: widget.height,
+          decoration: BoxDecoration(
+            borderRadius: r,
+            color: cfg.cardColor.withValues(alpha: 0.92),
+            border: Border.all(color: const Color(0x1FFFFFFF)),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 6)),
+            ],
+          ),
+          child: widget.child,
+        );
+      case CardStyle.outline:
+        return Container(
+          height: widget.height,
+          decoration: BoxDecoration(
+            borderRadius: r,
+            color: const Color(0x14FFFFFF),
+            border: Border.all(
+                color: cfg.cardColor.withValues(alpha: 0.75), width: 1.5),
+          ),
+          child: widget.child,
+        );
+    }
   }
 }
 
@@ -1272,31 +1459,6 @@ class _GlassPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _GlassPainter old) => true;
-}
-
-class _FrostedFallback extends StatelessWidget {
-  final LiquidGlass widget;
-  const _FrostedFallback({required this.widget});
-
-  @override
-  Widget build(BuildContext context) {
-    final r = BorderRadius.circular(widget.radius);
-    return ClipRRect(
-      borderRadius: r,
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          height: widget.height,
-          decoration: BoxDecoration(
-            borderRadius: r,
-            color: const Color(0x1FFFFFFF),
-            border: Border.all(color: const Color(0x24FFFFFF)),
-          ),
-          child: widget.child,
-        ),
-      ),
-    );
-  }
 }
 
 /// Idle-screen background: the flowing aurora waves + drifting stars ported
@@ -1385,6 +1547,212 @@ class _IdleWavesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _IdleWavesPainter old) => old.t != t;
+}
+
+/// Live customization panel (entered by swiping up). Mutates [AppConfig], which
+/// repaints the UI and persists immediately.
+class EditPanel extends StatelessWidget {
+  final VoidCallback onClose;
+  const EditPanel({super.key, required this.onClose});
+
+  Widget _label(String t) => Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 8),
+        child: Text(t,
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Color(0xB3FFFFFF))),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = ConfigScope.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 26),
+      constraints: const BoxConstraints(maxHeight: 460),
+      decoration: const BoxDecoration(
+        color: Color(0xF2121A24),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: Color(0x33FFFFFF))),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                    color: const Color(0x40FFFFFF),
+                    borderRadius: BorderRadius.circular(3)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Customize',
+                    style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white)),
+                TextButton(
+                  onPressed: onClose,
+                  child: Text('Done',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: cfg.accent)),
+                ),
+              ],
+            ),
+            _label('Background'),
+            _ChoiceRow<BgType>(
+              values: BgType.values,
+              selected: cfg.bg,
+              labels: const ['Glow', 'Waves', 'Solid'],
+              onSelect: (v) => cfg.update(() => cfg.bg = v),
+            ),
+            _label('Card style'),
+            _ChoiceRow<CardStyle>(
+              values: CardStyle.values,
+              selected: cfg.cardStyle,
+              labels: const ['Liquid Glass', 'Frosted', 'Solid', 'Outline'],
+              onSelect: (v) => cfg.update(() => cfg.cardStyle = v),
+            ),
+            _label('Intensity'),
+            Slider(
+              value: cfg.intensity,
+              activeColor: cfg.accent,
+              max: 40,
+              onChanged: (v) => cfg.update(() => cfg.intensity = v),
+            ),
+            _label('Corner radius'),
+            Slider(
+              value: cfg.cornerRadius,
+              activeColor: cfg.accent,
+              max: 44,
+              onChanged: (v) => cfg.update(() => cfg.cornerRadius = v),
+            ),
+            _label('Accent color'),
+            _SwatchRow(
+                selected: cfg.accent,
+                onSelect: (c) => cfg.update(() => cfg.accent = c)),
+            _label('Card color / tint'),
+            _SwatchRow(
+                selected: cfg.cardColor,
+                onSelect: (c) => cfg.update(() => cfg.cardColor = c)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChoiceRow<T> extends StatelessWidget {
+  final List<T> values;
+  final T selected;
+  final List<String> labels;
+  final ValueChanged<T> onSelect;
+  const _ChoiceRow({
+    required this.values,
+    required this.selected,
+    required this.labels,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: List.generate(values.length, (i) {
+        final sel = values[i] == selected;
+        return GestureDetector(
+          onTap: () => onSelect(values[i]),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: Color(sel ? 0x33FFFFFF : 0x14FFFFFF),
+              border: Border.all(color: Color(sel ? 0x80FFFFFF : 0x1FFFFFFF)),
+            ),
+            child: Text(labels[i],
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _SwatchRow extends StatelessWidget {
+  final Color selected;
+  final ValueChanged<Color> onSelect;
+  const _SwatchRow({required this.selected, required this.onSelect});
+
+  static const _colors = [
+    Color(0xFF2E7BFF), Color(0xFF49E07A), Color(0xFFFF8A3D), Color(0xFFE0533B),
+    Color(0xFFB45CFF), Color(0xFF22D3A8), Color(0xFFFFFFFF), Color(0xFFE0A53B),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: _colors.map((c) {
+        final sel = c.toARGB32() == selected.toARGB32();
+        return GestureDetector(
+          onTap: () => onSelect(c),
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: c,
+              shape: BoxShape.circle,
+              border: Border.all(
+                  color: sel ? Colors.white : const Color(0x33FFFFFF),
+                  width: sel ? 3 : 1),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+/// Renders whichever background the user picked in edit mode.
+class ConfiguredBackground extends StatelessWidget {
+  const ConfiguredBackground({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = ConfigScope.of(context);
+    switch (cfg.bg) {
+      case BgType.glow:
+        return const AnimatedBackground();
+      case BgType.waves:
+        return const IdleBackground();
+      case BgType.solid:
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                cfg.bgColor,
+                Color.lerp(cfg.bgColor, Colors.black, 0.45)!,
+              ],
+            ),
+          ),
+        );
+    }
+  }
 }
 
 class AnimatedBackground extends StatelessWidget {

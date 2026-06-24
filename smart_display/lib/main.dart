@@ -701,7 +701,9 @@ class _RootShellState extends State<RootShell> {
   Timer? _idleTimer;
   bool _idle = false;
   bool _editing = false;
-  double _dragStartY = 0;
+  bool _showTheme = false; // theme panel (gear) open over edit mode
+  double _holdProgress = 0; // swipe-up-and-hold-to-edit progress (0..1)
+  Timer? _holdTimer;
 
   @override
   void initState() {
@@ -718,6 +720,7 @@ class _RootShellState extends State<RootShell> {
   @override
   void dispose() {
     _idleTimer?.cancel();
+    _holdTimer?.cancel();
     _brightness.stop();
     _catalog.dispose();
     _weather.dispose();
@@ -738,6 +741,28 @@ class _RootShellState extends State<RootShell> {
     });
   }
 
+  // Touch the bottom of the screen and hold ~2s (a swipe-up-and-hold) to enter
+  // edit mode; a radial progress ring fills, releasing early cancels.
+  void _onPointerDown(PointerDownEvent e) {
+    _onActivity(e);
+    if (_editing || _idle) return;
+    if (e.position.dy < MediaQuery.sizeOf(context).height * 0.7) return;
+    _holdTimer?.cancel();
+    _holdTimer = Timer.periodic(const Duration(milliseconds: 40), (t) {
+      setState(() => _holdProgress += 40 / 2000);
+      if (_holdProgress >= 1) {
+        t.cancel();
+        setState(() => _holdProgress = 0);
+        _openEdit();
+      }
+    });
+  }
+
+  void _cancelHold([_]) {
+    _holdTimer?.cancel();
+    if (_holdProgress != 0) setState(() => _holdProgress = 0);
+  }
+
   void _onActivity(PointerEvent _) {
     if (_idle) {
       setState(() => _idle = false);
@@ -747,7 +772,7 @@ class _RootShellState extends State<RootShell> {
   }
 
   void _openEdit() {
-    _idleTimer?.cancel(); // don't fall asleep while customizing
+    _idleTimer?.cancel(); // don't fall asleep while editing
     setState(() {
       _idle = false;
       _editing = true;
@@ -755,19 +780,11 @@ class _RootShellState extends State<RootShell> {
   }
 
   void _closeEdit() {
-    setState(() => _editing = false);
+    setState(() {
+      _editing = false;
+      _showTheme = false;
+    });
     _resetIdleTimer();
-  }
-
-  // Swipe up from the bottom edge → enter edit mode. Swipe down → exit.
-  void _onVerticalDragEnd(DragEndDetails d) {
-    final h = MediaQuery.sizeOf(context).height;
-    final v = d.primaryVelocity ?? 0;
-    if (!_editing && v < -300 && _dragStartY > h * 0.6) {
-      _openEdit();
-    } else if (_editing && v > 300) {
-      _closeEdit();
-    }
   }
 
   @override
@@ -784,20 +801,24 @@ class _RootShellState extends State<RootShell> {
       holder: _bgTex,
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: _onActivity,
+        onPointerDown: _onPointerDown,
         onPointerMove: _onActivity,
+        onPointerUp: _cancelHold,
+        onPointerCancel: _cancelHold,
         child: MouseRegion(
           cursor: SystemMouseCursors.none,
-          child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onVerticalDragStart: (d) => _dragStartY = d.globalPosition.dy,
-          onVerticalDragEnd: _onVerticalDragEnd,
           child: Scaffold(
           backgroundColor: const Color(0xFF06080F),
           body: Stack(
             fit: StackFit.expand,
             children: [
               const ConfiguredBackground(),
+              if (_editing)
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: ColoredBox(color: Color(0x55000000)),
+                  ),
+                ),
               // Active UI and idle screen cross-fade over the shared
               // background — no hard cut, just a soft dissolve.
               IgnorePointer(
@@ -806,7 +827,7 @@ class _RootShellState extends State<RootShell> {
                   opacity: _idle ? 0 : 1,
                   duration: _fade,
                   curve: Curves.easeInOut,
-                  child: const DashboardScreen(),
+                  child: DashboardScreen(editing: _editing),
                 ),
               ),
               IgnorePointer(
@@ -818,24 +839,216 @@ class _RootShellState extends State<RootShell> {
                   child: const IdleScreen(),
                 ),
               ),
-              // Edit-mode panel slides up from the bottom.
+              if (_editing)
+                _EditBar(
+                  onDone: _closeEdit,
+                  onTheme: () => setState(() => _showTheme = true),
+                  onAdd: () => _showEntityPicker(context),
+                ),
+              // Theme panel (gear) slides up over edit mode.
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 280),
                 curve: Curves.easeOutCubic,
                 left: 0,
                 right: 0,
-                bottom: _editing ? 0 : -600,
-                child: EditPanel(onClose: _closeEdit),
+                bottom: _showTheme ? 0 : -600,
+                child: EditPanel(
+                    onClose: () => setState(() => _showTheme = false)),
               ),
+              if (_holdProgress > 0)
+                Positioned(
+                  bottom: 60,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: CircularProgressIndicator(
+                        value: _holdProgress,
+                        strokeWidth: 4,
+                        color: ConfigScope.of(context).accent,
+                        backgroundColor: const Color(0x33FFFFFF),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
         ),
+      ),
+      ),
+      ),
+      ),
+      ),
+    );
+  }
+}
+
+/// Edit-mode top bar: shows while the layout editor is active.
+class _EditBar extends StatelessWidget {
+  final VoidCallback onDone;
+  final VoidCallback onTheme;
+  final VoidCallback onAdd;
+  const _EditBar(
+      {required this.onDone, required this.onTheme, required this.onAdd});
+
+  Widget _round(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0x33FFFFFF),
+            border: Border.fromBorderSide(BorderSide(color: Color(0x40FFFFFF))),
+          ),
+          child: Icon(icon, color: Colors.white, size: 22),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ConfigScope.of(context).accent;
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              const Text('Editing',
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white)),
+              const Spacer(),
+              _round(Icons.palette_rounded, onTheme),
+              const SizedBox(width: 10),
+              _round(Icons.add_rounded, onAdd),
+              const SizedBox(width: 10),
+              GestureDetector(
+                onTap: onDone,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+                  decoration: BoxDecoration(
+                      color: accent, borderRadius: BorderRadius.circular(22)),
+                  child: const Text('Done',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+void _showEntityPicker(BuildContext context) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => const _EntityPicker(),
+  );
+}
+
+/// Searchable list of all HA entities; tapping one adds a card for it.
+class _EntityPicker extends StatefulWidget {
+  const _EntityPicker();
+  @override
+  State<_EntityPicker> createState() => _EntityPickerState();
+}
+
+class _EntityPickerState extends State<_EntityPicker> {
+  String _q = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final cat = EntityScope.of(context);
+    final layout = LayoutScope.of(context);
+    final q = _q.toLowerCase();
+    final items = cat.all.where((e) {
+      if (q.isEmpty) return true;
+      final fn =
+          ((e.value['attributes'] as Map?)?['friendly_name'] as String? ?? '')
+              .toLowerCase();
+      return e.key.toLowerCase().contains(q) || fn.contains(q);
+    }).toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+
+    return Container(
+      height: MediaQuery.sizeOf(context).height * 0.72,
+      padding: EdgeInsets.fromLTRB(
+          16, 12, 16, MediaQuery.viewInsetsOf(context).bottom + 16),
+      decoration: const BoxDecoration(
+        color: Color(0xF2121A24),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      ),
-      ),
+      child: Column(
+        children: [
+          Container(
+            width: 44,
+            height: 5,
+            decoration: BoxDecoration(
+                color: const Color(0x40FFFFFF),
+                borderRadius: BorderRadius.circular(3)),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            style: const TextStyle(color: Colors.white),
+            onChanged: (v) => setState(() => _q = v),
+            decoration: InputDecoration(
+              hintText: 'Search ${cat.count} entities…',
+              hintStyle: const TextStyle(color: Color(0x80FFFFFF)),
+              prefixIcon: const Icon(Icons.search, color: Color(0x80FFFFFF)),
+              filled: true,
+              fillColor: const Color(0x14FFFFFF),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: items.isEmpty
+                ? const Center(
+                    child: Text('No entities (is HA connected?)',
+                        style: TextStyle(color: Color(0x80FFFFFF))))
+                : ListView.builder(
+                    itemCount: items.length,
+                    itemBuilder: (_, i) {
+                      final e = items[i];
+                      final fn =
+                          (e.value['attributes'] as Map?)?['friendly_name']
+                                  as String? ??
+                              e.key;
+                      final on = e.value['state'] == 'on';
+                      return ListTile(
+                        leading: Icon(entityIcon(e.key, on),
+                            color: const Color(0xCCFFFFFF)),
+                        title: Text(fn,
+                            style: const TextStyle(color: Colors.white)),
+                        subtitle: Text(e.key,
+                            style: const TextStyle(color: Color(0x66FFFFFF))),
+                        onTap: () {
+                          layout.addEntity(e.key);
+                          Navigator.pop(context);
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -1032,10 +1245,11 @@ const _month = [
 /// small page indicator. Page 0 is the Overview; the rest are placeholders for
 /// now (floors/energy/printer).
 class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({super.key});
+  final bool editing;
+  const DashboardScreen({super.key, this.editing = false});
 
   @override
-  Widget build(BuildContext context) => const GridDashboard();
+  Widget build(BuildContext context) => GridDashboard(editing: editing);
 }
 
 // ── Editable grid layout ─────────────────────────────────────────────────────
@@ -1144,8 +1358,19 @@ class LayoutScope extends InheritedNotifier<AppLayout> {
 }
 
 /// Renders the saved card layout on a responsive kGridCols×kGridRows grid.
-class GridDashboard extends StatelessWidget {
-  const GridDashboard({super.key});
+/// In edit mode, cards get an outline, a delete button, and drag-to-move with
+/// grid snapping.
+class GridDashboard extends StatefulWidget {
+  final bool editing;
+  const GridDashboard({super.key, this.editing = false});
+
+  @override
+  State<GridDashboard> createState() => _GridDashboardState();
+}
+
+class _GridDashboardState extends State<GridDashboard> {
+  String? _dragId;
+  Offset _drag = Offset.zero;
 
   @override
   Widget build(BuildContext context) {
@@ -1158,21 +1383,88 @@ class GridDashboard extends StatelessWidget {
         child: LayoutBuilder(builder: (ctx, c) {
           final cellW = (c.maxWidth - gap * (kGridCols - 1)) / kGridCols;
           final cellH = (c.maxHeight - gap * (kGridRows - 1)) / kGridRows;
+          final stepX = cellW + gap;
+          final stepY = cellH + gap;
           return Stack(
             children: [
               for (final card in layout.cards)
-                Positioned(
-                  left: card.col * (cellW + gap),
-                  top: card.row * (cellH + gap),
-                  width: card.w * cellW + (card.w - 1) * gap,
-                  height: card.h * cellH + (card.h - 1) * gap,
-                  child: _cardWidget(card),
-                ),
+                _positioned(card, cellW, cellH, gap, stepX, stepY, layout),
             ],
           );
         }),
       ),
     );
+  }
+
+  Widget _positioned(CardSpec card, double cellW, double cellH, double gap,
+      double stepX, double stepY, AppLayout layout) {
+    final dragging = _dragId == card.id;
+    final left = card.col * stepX + (dragging ? _drag.dx : 0);
+    final top = card.row * stepY + (dragging ? _drag.dy : 0);
+    final w = card.w * cellW + (card.w - 1) * gap;
+    final h = card.h * cellH + (card.h - 1) * gap;
+
+    Widget child = _cardWidget(card);
+    if (widget.editing) {
+      final accent = ConfigScope.of(context).accent;
+      child = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (_) => setState(() {
+          _dragId = card.id;
+          _drag = Offset.zero;
+        }),
+        onPanUpdate: (d) => setState(() => _drag += d.delta),
+        onPanEnd: (_) {
+          final newCol = ((card.col * stepX + _drag.dx) / stepX)
+              .round()
+              .clamp(0, kGridCols - card.w);
+          final newRow = ((card.row * stepY + _drag.dy) / stepY)
+              .round()
+              .clamp(0, kGridRows - card.h);
+          layout.update(() {
+            card.col = newCol;
+            card.row = newRow;
+          });
+          setState(() {
+            _dragId = null;
+            _drag = Offset.zero;
+          });
+        },
+        child: Stack(
+          children: [
+            Positioned.fill(child: child),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius:
+                        BorderRadius.circular(ConfigScope.of(context).cornerRadius),
+                    border: Border.all(color: accent, width: 2),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 6,
+              right: 6,
+              child: GestureDetector(
+                onTap: () => layout.remove(card.id),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(0xCC000000),
+                  ),
+                  child: const Icon(Icons.close, size: 18, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Positioned(left: left, top: top, width: w, height: h, child: child);
   }
 }
 

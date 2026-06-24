@@ -16,9 +16,8 @@ Replace the old assistant-specific notes with a clear implementation target for:
 
 What already exists:
 
-- Raspberry Pi kiosk / smart display shell
+- Native Flutter smart display shell (`smart_display/`)
 - MQTT bridge for Home Assistant entities
-- custom Lovelace smart display card
 - audio initialization and volume controls
 - touch scrolling and display boot flow
 - baseline assistant service with local state, mute, and presence
@@ -103,7 +102,7 @@ Optional later:
 ## Runtime notes
 
 - Realtime model default in this repo is currently `gpt-realtime`
-- Session management should be isolated from kiosk/browser logic
+- Session management should be isolated from the display UI logic
 - UI should continue working even if Realtime is offline
 - Mute state should hard-block mic capture and session start
 - Interruptions should stop current playback before new response audio starts

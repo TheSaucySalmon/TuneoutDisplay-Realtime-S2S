@@ -956,7 +956,6 @@ class WeatherCard extends StatelessWidget {
             ? '$kLocationLabel   ·   Feels like ${w.feelsF}°F   ·   Wind ${w.wind}'
             : 'Check network or location settings.');
     return LiquidGlass(
-      radius: 16,
       forceFrosted: true,
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -1122,7 +1121,6 @@ class FloorPage extends StatelessWidget {
       padding: EdgeInsets.all(24 * s),
       child: Center(
         child: LiquidGlass(
-          radius: 22,
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 40 * s),
             child: Column(
@@ -1207,7 +1205,6 @@ class _WeatherStrip extends StatelessWidget {
     final condTemp =
         w == null ? 'Loading…' : '${w.condition}  ·  ${w.tempF} °F';
     return LiquidGlass(
-      radius: 18,
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 16 * s),
         child: Row(
@@ -1414,7 +1411,7 @@ class _ControlButton extends StatelessWidget {
         child: child,
       );
     }
-    return LiquidGlass(radius: 16, child: child);
+    return LiquidGlass(child: child);
   }
 }
 
@@ -1426,7 +1423,6 @@ class CalendarCard extends StatelessWidget {
     final s = _scale(context);
     final now = DateTime.now();
     return LiquidGlass(
-      radius: 20,
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 8 * s),
         child: Column(
@@ -1507,7 +1503,6 @@ class RoomCard extends StatelessWidget {
     }
 
     return LiquidGlass(
-      radius: 20,
       child: Padding(
         padding: EdgeInsets.all(22 * s),
         child: Column(
@@ -1554,8 +1549,6 @@ class RoomCard extends StatelessWidget {
 class LiquidGlass extends StatefulWidget {
   final Widget child;
   final double? height;
-  final double radius;
-  final double thickness;
 
   /// Force the BackdropFilter frosted path instead of the glow-sampling shader.
   /// Used over backgrounds the shader doesn't know about (e.g. the idle waves),
@@ -1566,8 +1559,6 @@ class LiquidGlass extends StatefulWidget {
     super.key,
     required this.child,
     this.height,
-    this.radius = 18,
-    this.thickness = 16,
     this.forceFrosted = false,
   });
 

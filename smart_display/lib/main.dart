@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 /// case [LiquidGlass] falls back to a plain frosted panel.
 ui.FragmentProgram? glassProgram;
 late AppConfig appConfig;
+late AppLayout appLayout;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,7 @@ Future<void> main() async {
     glassProgram = null; // graceful fallback (e.g. if Pi can't run the shader)
   }
   appConfig = await AppConfig.load();
+  appLayout = await AppLayout.load();
   runApp(const SmartDisplayApp());
 }
 
@@ -31,11 +33,14 @@ class SmartDisplayApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ConfigScope(
       config: appConfig,
-      child: MaterialApp(
-        title: 'Tuneout Display',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(brightness: Brightness.dark, fontFamily: 'SF Pro'),
-        home: const RootShell(),
+      child: LayoutScope(
+        layout: appLayout,
+        child: MaterialApp(
+          title: 'Tuneout Display',
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(brightness: Brightness.dark, fontFamily: 'SF Pro'),
+          home: const RootShell(),
+        ),
       ),
     );
   }
@@ -1026,171 +1031,229 @@ const _month = [
 /// Swipe-first dashboard: no nav bar, just horizontally swipeable pages with a
 /// small page indicator. Page 0 is the Overview; the rest are placeholders for
 /// now (floors/energy/printer).
-class DashboardScreen extends StatefulWidget {
+class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  Widget build(BuildContext context) => const GridDashboard();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
-  final _pc = PageController();
-  int _page = 0;
+// ── Editable grid layout ─────────────────────────────────────────────────────
+// The dashboard is a saved list of cards on a fixed column/row grid. Edit mode
+// (next phase) mutates this; for now it renders the default/saved layout.
+const int kGridCols = 4;
+const int kGridRows = 4;
 
-  static const _pages = <Widget>[
-    OverviewPage(),
-    FloorPage(title: 'First Floor', icon: Icons.home_rounded),
-    FloorPage(title: 'Second Floor', icon: Icons.weekend_rounded),
-    FloorPage(title: '3D Printer', icon: Icons.print_rounded),
-  ];
+enum CardKind { weather, camera, calendar, haStatus, entity }
 
-  @override
-  void dispose() {
-    _pc.dispose();
-    super.dispose();
+class CardSpec {
+  final String id;
+  final CardKind kind;
+  final String? entityId;
+  int col, row, w, h;
+  CardSpec({
+    required this.id,
+    required this.kind,
+    this.entityId,
+    required this.col,
+    required this.row,
+    required this.w,
+    required this.h,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'kind': kind.index,
+        'entityId': entityId,
+        'col': col,
+        'row': row,
+        'w': w,
+        'h': h,
+      };
+  factory CardSpec.fromJson(Map<String, dynamic> j) => CardSpec(
+        id: j['id'] as String,
+        kind: CardKind.values[(j['kind'] as num).toInt()],
+        entityId: j['entityId'] as String?,
+        col: (j['col'] as num).toInt(),
+        row: (j['row'] as num).toInt(),
+        w: (j['w'] as num).toInt(),
+        h: (j['h'] as num).toInt(),
+      );
+}
+
+List<CardSpec> _defaultLayout() => [
+      CardSpec(id: 'weather', kind: CardKind.weather, col: 0, row: 0, w: 2, h: 1),
+      CardSpec(id: 'camera', kind: CardKind.camera, col: 0, row: 1, w: 2, h: 3),
+      CardSpec(id: 'calendar', kind: CardKind.calendar, col: 2, row: 0, w: 2, h: 3),
+      CardSpec(id: 'hastatus', kind: CardKind.haStatus, col: 2, row: 3, w: 2, h: 1),
+    ];
+
+class AppLayout extends ChangeNotifier {
+  List<CardSpec> cards;
+  AppLayout(this.cards);
+
+  static File get _file =>
+      File('${Platform.environment['HOME']}/.config/smart-display/layout.json');
+
+  static Future<AppLayout> load() async {
+    try {
+      final f = _file;
+      if (f.existsSync()) {
+        final j = jsonDecode(await f.readAsString()) as List;
+        final cards =
+            j.map((e) => CardSpec.fromJson(e as Map<String, dynamic>)).toList();
+        if (cards.isNotEmpty) return AppLayout(cards);
+      }
+    } catch (_) {}
+    return AppLayout(_defaultLayout());
   }
+
+  Future<void> save() async {
+    try {
+      final f = _file;
+      await f.parent.create(recursive: true);
+      await f.writeAsString(jsonEncode(cards.map((c) => c.toJson()).toList()));
+    } catch (_) {}
+  }
+
+  void update(VoidCallback fn) {
+    fn();
+    notifyListeners();
+    save();
+  }
+
+  void addEntity(String entityId) => update(() => cards.add(CardSpec(
+        id: 'e${DateTime.now().millisecondsSinceEpoch}',
+        kind: CardKind.entity,
+        entityId: entityId,
+        col: 0,
+        row: 0,
+        w: 1,
+        h: 1,
+      )));
+
+  void remove(String id) => update(() => cards.removeWhere((c) => c.id == id));
+}
+
+class LayoutScope extends InheritedNotifier<AppLayout> {
+  const LayoutScope(
+      {super.key, required AppLayout layout, required super.child})
+      : super(notifier: layout);
+  static AppLayout of(BuildContext c) =>
+      c.dependOnInheritedWidgetOfExactType<LayoutScope>()!.notifier!;
+}
+
+/// Renders the saved card layout on a responsive kGridCols×kGridRows grid.
+class GridDashboard extends StatelessWidget {
+  const GridDashboard({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final s = _scale(context);
+    final layout = LayoutScope.of(context);
+    final gap = 14 * s;
     return SafeArea(
-      child: Stack(
-        children: [
-          PageView(
-            controller: _pc,
-            onPageChanged: (i) => setState(() => _page = i),
-            children: _pages,
-          ),
-          Positioned(
-            bottom: 14,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(_pages.length, (i) {
-                final active = i == _page;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  width: active ? 20 : 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: active
-                        ? ConfigScope.of(context).accent
-                        : const Color(0x40FFFFFF),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                );
-              }),
-            ),
-          ),
-        ],
+      child: Padding(
+        padding: EdgeInsets.all(gap),
+        child: LayoutBuilder(builder: (ctx, c) {
+          final cellW = (c.maxWidth - gap * (kGridCols - 1)) / kGridCols;
+          final cellH = (c.maxHeight - gap * (kGridRows - 1)) / kGridRows;
+          return Stack(
+            children: [
+              for (final card in layout.cards)
+                Positioned(
+                  left: card.col * (cellW + gap),
+                  top: card.row * (cellH + gap),
+                  width: card.w * cellW + (card.w - 1) * gap,
+                  height: card.h * cellH + (card.h - 1) * gap,
+                  child: _cardWidget(card),
+                ),
+            ],
+          );
+        }),
       ),
     );
   }
 }
 
-class OverviewPage extends StatelessWidget {
-  const OverviewPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = _scale(context);
-    return Padding(
-      padding: EdgeInsets.fromLTRB(24 * s, 24 * s, 24 * s, 30 * s),
-      child: const Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(flex: 5, child: _LeftColumn()),
-          SizedBox(width: 18),
-          Expanded(flex: 5, child: _RightColumn()),
-        ],
-      ),
-    );
+Widget _cardWidget(CardSpec card) {
+  switch (card.kind) {
+    case CardKind.weather:
+      return const _WeatherStrip();
+    case CardKind.camera:
+      return const CameraCard();
+    case CardKind.calendar:
+      return const CalendarCard();
+    case CardKind.haStatus:
+      return const RoomCard();
+    case CardKind.entity:
+      return _EntityCard(entityId: card.entityId ?? '');
   }
 }
 
-class FloorPage extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  const FloorPage({super.key, required this.title, required this.icon});
+IconData entityIcon(String id, bool on) {
+  if (id.startsWith('light.')) {
+    return on ? Icons.lightbulb : Icons.lightbulb_outline;
+  }
+  if (id.startsWith('switch.')) return Icons.toggle_on_outlined;
+  if (id.startsWith('climate.')) return Icons.thermostat;
+  if (id.startsWith('camera.')) return Icons.videocam_rounded;
+  if (id.startsWith('media_player.')) return Icons.speaker_rounded;
+  if (id.startsWith('scene.') || id.startsWith('script.')) {
+    return Icons.movie_rounded;
+  }
+  if (id.startsWith('sensor.') || id.startsWith('binary_sensor.')) {
+    return Icons.sensors_rounded;
+  }
+  if (id.startsWith('fan.')) return Icons.air_rounded;
+  if (id.startsWith('lock.')) return Icons.lock_rounded;
+  return Icons.devices_other_rounded;
+}
+
+/// Generic card for a user-added HA entity; live state from the catalog.
+class _EntityCard extends StatelessWidget {
+  final String entityId;
+  const _EntityCard({required this.entityId});
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
-    return Padding(
-      padding: EdgeInsets.all(24 * s),
-      child: Center(
-        child: LiquidGlass(
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 48 * s, vertical: 40 * s),
-            child: Column(
+    final st = EntityScope.of(context).state(entityId);
+    final name =
+        (st?['attributes'] as Map?)?['friendly_name'] as String? ?? entityId;
+    final state = st?['state'] as String? ?? '—';
+    final on = state == 'on';
+    return LiquidGlass(
+      child: Padding(
+        padding: EdgeInsets.all(16 * s),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Icon(entityIcon(entityId, on),
+                size: 26 * s,
+                color: on
+                    ? ConfigScope.of(context).accent
+                    : const Color(0xCCFFFFFF)),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 48 * s, color: const Color(0xCCFFFFFF)),
-                SizedBox(height: 16 * s),
-                Text(title,
+                Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 28 * s,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 16 * s,
+                        fontWeight: FontWeight.w600,
                         color: Colors.white)),
-                SizedBox(height: 6 * s),
-                Text('Coming soon',
+                Text(state,
                     style: TextStyle(
-                        fontSize: 15 * s, color: const Color(0x99FFFFFF))),
+                        fontSize: 13 * s, color: const Color(0x99FFFFFF))),
               ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LeftColumn extends StatelessWidget {
-  const _LeftColumn();
-
-  @override
-  Widget build(BuildContext context) {
-    final s = _scale(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _WeatherStrip(),
-        SizedBox(height: 16 * s),
-        const Expanded(child: CameraCard()),
-        SizedBox(height: 16 * s),
-        Row(
-          children: [
-            const Expanded(
-              child: _ControlButton(icon: Icons.cast_rounded, label: 'Idle'),
-            ),
-            SizedBox(width: 16 * s),
-            const Expanded(
-              child: _ControlButton(
-                  icon: Icons.volume_up_rounded,
-                  label: 'Volume · 60%',
-                  primary: true),
             ),
           ],
         ),
-      ],
-    );
-  }
-}
-
-class _RightColumn extends StatelessWidget {
-  const _RightColumn();
-
-  @override
-  Widget build(BuildContext context) {
-    final s = _scale(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Expanded(flex: 3, child: CalendarCard()),
-        SizedBox(height: 16 * s),
-        const Expanded(flex: 2, child: RoomCard()),
-      ],
+      ),
     );
   }
 }
@@ -1365,53 +1428,6 @@ class _CameraCardState extends State<CameraCard> {
         ),
       ),
     );
-  }
-}
-
-class _ControlButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool primary;
-  const _ControlButton(
-      {required this.icon, required this.label, this.primary = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = _scale(context);
-    final child = Padding(
-      padding: EdgeInsets.symmetric(vertical: 16 * s),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 20 * s, color: Colors.white),
-          SizedBox(width: 10 * s),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 16 * s,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white)),
-        ],
-      ),
-    );
-    if (primary) {
-      final accent = ConfigScope.of(context).accent;
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            colors: [accent, Color.lerp(accent, Colors.black, 0.25)!],
-          ),
-          boxShadow: [
-            BoxShadow(
-                color: accent.withValues(alpha: 0.33),
-                blurRadius: 18,
-                offset: const Offset(0, 6)),
-          ],
-        ),
-        child: child,
-      );
-    }
-    return LiquidGlass(child: child);
   }
 }
 

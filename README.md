@@ -54,7 +54,6 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 ## Features
 
 - **Native display shell** - Flutter app (`smart_display/`) that boots fullscreen under labwc: liquid-glass dashboard, static idle screensaver, live HA entities, weather, and camera snapshots. No browser.
-- **Standalone Pi OS idle screen** - optional native Python screen with local time, date, and Open-Meteo weather, without requiring Home Assistant
 - **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
 - **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
 - **Home Assistant voice control path** - Realtime can call HA services for entities, scenes, scripts, and helpers
@@ -75,16 +74,10 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 configure.sh                    # Main setup / install script for the Pi
 mqtt-bridge.py                  # MQTT discovery + HA control entities
 touch-scroll.py                 # Touch swipe -> scroll daemon
-stop-server.py                  # Helper script for stopping the local server
 README.md                       # Main project documentation
 ha-configuration.md             # Home Assistant setup notes
 OPENAI-REALTIME.md              # Realtime implementation notes
 LICENSE.txt                     # License
-
-idle-screen/
-  idle_screen.py                # Native Pi OS idle screen script
-  install-idle-screen.sh        # Pi desktop autostart installer
-  README.md                     # Idle screen setup notes
 
 assistant/
   assistant_service.py          # Main assistant runtime service

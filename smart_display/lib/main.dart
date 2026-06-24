@@ -843,7 +843,6 @@ class _RootShellState extends State<RootShell> {
                 _EditBar(
                   onDone: _closeEdit,
                   onTheme: () => setState(() => _showTheme = true),
-                  onAdd: () => _showEntityPicker(context),
                 ),
               // Theme panel (gear) slides up over edit mode.
               AnimatedPositioned(
@@ -890,9 +889,7 @@ class _RootShellState extends State<RootShell> {
 class _EditBar extends StatelessWidget {
   final VoidCallback onDone;
   final VoidCallback onTheme;
-  final VoidCallback onAdd;
-  const _EditBar(
-      {required this.onDone, required this.onTheme, required this.onAdd});
+  const _EditBar({required this.onDone, required this.onTheme});
 
   Widget _round(IconData icon, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
@@ -928,7 +925,7 @@ class _EditBar extends StatelessWidget {
               const Spacer(),
               _round(Icons.palette_rounded, onTheme),
               const SizedBox(width: 10),
-              _round(Icons.add_rounded, onAdd),
+              _round(Icons.add_rounded, () => _showEntityPicker(context)),
               const SizedBox(width: 10),
               GestureDetector(
                 onTap: onDone,
@@ -952,18 +949,29 @@ class _EditBar extends StatelessWidget {
   }
 }
 
-void _showEntityPicker(BuildContext context) {
+/// Opens the entity picker. With no [onPick] it adds a new card; pass [onPick]
+/// to rebind an existing card to the chosen entity instead.
+void _showEntityPicker(BuildContext context, {void Function(String)? onPick}) {
+  // EntityScope lives inside RootShell, below the Navigator, so a modal route
+  // can't inherit it — capture and re-inject. Caller's context must be below
+  // EntityScope (the dashboard subtree or an already-injected sheet).
+  final catalog = EntityScope.of(context);
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => const _EntityPicker(),
+    builder: (_) => EntityScope(
+      catalog: catalog,
+      child: _EntityPicker(onPick: onPick),
+    ),
   );
 }
 
-/// Searchable list of all HA entities; tapping one adds a card for it.
+/// Searchable list of all HA entities; tapping one adds a card for it (or, when
+/// [onPick] is given, hands the entity id back to the caller for rebinding).
 class _EntityPicker extends StatefulWidget {
-  const _EntityPicker();
+  final void Function(String)? onPick;
+  const _EntityPicker({this.onPick});
   @override
   State<_EntityPicker> createState() => _EntityPickerState();
 }
@@ -1041,7 +1049,11 @@ class _EntityPickerState extends State<_EntityPicker> {
                         subtitle: Text(e.key,
                             style: const TextStyle(color: Color(0x66FFFFFF))),
                         onTap: () {
-                          layout.addEntity(e.key);
+                          if (widget.onPick != null) {
+                            widget.onPick!(e.key);
+                          } else {
+                            layout.addEntity(e.key);
+                          }
                           Navigator.pop(context);
                         },
                       );
@@ -1051,6 +1063,326 @@ class _EntityPickerState extends State<_EntityPicker> {
         ],
       ),
     );
+  }
+}
+
+String _cardKindLabel(CardKind k) {
+  switch (k) {
+    case CardKind.weather:
+      return 'Weather';
+    case CardKind.camera:
+      return 'Camera';
+    case CardKind.calendar:
+      return 'Calendar';
+    case CardKind.haStatus:
+      return 'HA Status';
+    case CardKind.entity:
+      return 'Entity';
+  }
+}
+
+/// Opens the per-card settings sheet (resize, rebind entity, style/color
+/// override). Tapping a card in edit mode lands here.
+void _showCardSettings(BuildContext context, CardSpec card, AppLayout layout) {
+  // ConfigScope/LayoutScope live above MaterialApp so modal routes already
+  // inherit them; EntityScope lives inside RootShell, so re-inject it here.
+  final catalog = EntityScope.of(context);
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => EntityScope(
+      catalog: catalog,
+      child: _CardSettings(card: card),
+    ),
+  );
+}
+
+/// Settings for a single card: resize span, rebind entity, override style/color.
+class _CardSettings extends StatefulWidget {
+  final CardSpec card;
+  const _CardSettings({required this.card});
+  @override
+  State<_CardSettings> createState() => _CardSettingsState();
+}
+
+class _CardSettingsState extends State<_CardSettings> {
+  // Swatch palette for per-card color overrides.
+  static const _swatches = <Color>[
+    Color(0xFF2E7BFF), // blue (default accent)
+    Color(0xFF34C759), // green
+    Color(0xFFFF9F0A), // amber
+    Color(0xFFFF453A), // red
+    Color(0xFFBF5AF2), // purple
+    Color(0xFF64D2FF), // cyan
+    Color(0xFFFFFFFF), // white
+  ];
+
+  CardSpec get card => widget.card;
+
+  @override
+  Widget build(BuildContext context) {
+    final layout = LayoutScope.of(context);
+    final maxW = kGridCols - card.col;
+    final maxH = kGridRows - card.row;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+          20, 12, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+      decoration: const BoxDecoration(
+        color: Color(0xF2121A24),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                  color: const Color(0x40FFFFFF),
+                  borderRadius: BorderRadius.circular(3)),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text('${_cardKindLabel(card.kind)} card',
+              style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white)),
+          if (card.kind == CardKind.entity && card.entityId != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(card.entityId!,
+                  style: const TextStyle(
+                      fontSize: 13, color: Color(0x80FFFFFF))),
+            ),
+          const SizedBox(height: 20),
+
+          // Resize -------------------------------------------------------
+          _label('Size'),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _stepper('Width', card.w, 1, maxW,
+                    (v) => layout.update(() => card.w = v)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _stepper('Height', card.h, 1, maxH,
+                    (v) => layout.update(() => card.h = v)),
+              ),
+            ],
+          ),
+
+          // Rebind entity ------------------------------------------------
+          if (card.kind == CardKind.entity) ...[
+            const SizedBox(height: 20),
+            _label('Entity'),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () => _showEntityPicker(context, onPick: (id) {
+                layout.update(() => card.entityId = id);
+                setState(() {});
+              }),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0x14FFFFFF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.swap_horiz_rounded,
+                        color: Color(0xCCFFFFFF), size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(card.entityId ?? 'Pick an entity',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white)),
+                    ),
+                    const Icon(Icons.chevron_right,
+                        color: Color(0x80FFFFFF)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+          // Style override ----------------------------------------------
+          const SizedBox(height: 20),
+          _label('Style'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _chip('Default', card.style == null,
+                  () => layout.update(() => card.style = null)),
+              for (final st in CardStyle.values)
+                _chip(_styleLabel(st), card.style == st,
+                    () => layout.update(() => card.style = st)),
+            ],
+          ),
+
+          // Color override ----------------------------------------------
+          const SizedBox(height: 20),
+          _label('Color'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _swatch(null, card.color == null,
+                  () => layout.update(() => card.color = null)),
+              for (final c in _swatches)
+                _swatch(c, card.color == c.toARGB32(),
+                    () => layout.update(() => card.color = c.toARGB32())),
+            ],
+          ),
+
+          // Delete -------------------------------------------------------
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: GestureDetector(
+              onTap: () {
+                layout.remove(card.id);
+                Navigator.pop(context);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0x22FF453A),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0x55FF453A)),
+                ),
+                child: const Text('Delete card',
+                    style: TextStyle(
+                        color: Color(0xFFFF6961),
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _label(String t) => Text(t,
+      style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Color(0x99FFFFFF),
+          letterSpacing: 0.4));
+
+  Widget _stepper(
+      String label, int value, int min, int max, ValueChanged<int> onChange) {
+    Widget btn(IconData icon, bool enabled, VoidCallback onTap) =>
+        GestureDetector(
+          onTap: enabled ? onTap : null,
+          child: Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0x14FFFFFF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon,
+                color: enabled ? Colors.white : const Color(0x33FFFFFF),
+                size: 20),
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x0DFFFFFF),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12, color: Color(0x80FFFFFF))),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              btn(Icons.remove, value > min, () => onChange(value - 1)),
+              Text('$value',
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white)),
+              btn(Icons.add, value < max, () => onChange(value + 1)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    final accent = ConfigScope.of(context).accent;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? accent : const Color(0x14FFFFFF),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: selected ? accent : const Color(0x26FFFFFF)),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: Colors.white,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+      ),
+    );
+  }
+
+  Widget _swatch(Color? color, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: color ?? const Color(0x14FFFFFF),
+          shape: BoxShape.circle,
+          border: Border.all(
+              color: selected ? Colors.white : const Color(0x33FFFFFF),
+              width: selected ? 3 : 1),
+        ),
+        child: color == null
+            ? const Icon(Icons.block, color: Color(0x80FFFFFF), size: 18)
+            : (selected
+                ? const Icon(Icons.check, color: Colors.white, size: 20)
+                : null),
+      ),
+    );
+  }
+
+  String _styleLabel(CardStyle s) {
+    switch (s) {
+      case CardStyle.liquidGlass:
+        return 'Glass';
+      case CardStyle.frosted:
+        return 'Frosted';
+      case CardStyle.solid:
+        return 'Solid';
+      case CardStyle.outline:
+        return 'Outline';
+    }
   }
 }
 
@@ -1263,8 +1595,16 @@ enum CardKind { weather, camera, calendar, haStatus, entity }
 class CardSpec {
   final String id;
   final CardKind kind;
-  final String? entityId;
+  String? entityId;
   int col, row, w, h;
+
+  /// Per-card style override; null = inherit the global AppConfig.cardStyle.
+  CardStyle? style;
+
+  /// Per-card color override (ARGB int); null = inherit the global accent/card
+  /// color. Tints the icon (entity cards) and the card fill/border.
+  int? color;
+
   CardSpec({
     required this.id,
     required this.kind,
@@ -1273,6 +1613,8 @@ class CardSpec {
     required this.row,
     required this.w,
     required this.h,
+    this.style,
+    this.color,
   });
 
   Map<String, dynamic> toJson() => {
@@ -1283,6 +1625,8 @@ class CardSpec {
         'row': row,
         'w': w,
         'h': h,
+        'style': style?.index,
+        'color': color,
       };
   factory CardSpec.fromJson(Map<String, dynamic> j) => CardSpec(
         id: j['id'] as String,
@@ -1292,7 +1636,32 @@ class CardSpec {
         row: (j['row'] as num).toInt(),
         w: (j['w'] as num).toInt(),
         h: (j['h'] as num).toInt(),
+        style: j['style'] == null
+            ? null
+            : CardStyle.values[(j['style'] as num).toInt()],
+        color: (j['color'] as num?)?.toInt(),
       );
+}
+
+/// Per-card style/color override carried down to [LiquidGlass] and [_EntityCard]
+/// via context, so a single card can deviate from the global theme without
+/// rewriting every card widget to accept override parameters.
+class CardOverride extends InheritedWidget {
+  final CardStyle? style;
+  final Color? color;
+  const CardOverride({
+    super.key,
+    this.style,
+    this.color,
+    required super.child,
+  });
+
+  static CardOverride? maybeOf(BuildContext c) =>
+      c.dependOnInheritedWidgetOfExactType<CardOverride>();
+
+  @override
+  bool updateShouldNotify(CardOverride old) =>
+      style != old.style || color != old.color;
 }
 
 List<CardSpec> _defaultLayout() => [
@@ -1405,10 +1774,18 @@ class _GridDashboardState extends State<GridDashboard> {
     final h = card.h * cellH + (card.h - 1) * gap;
 
     Widget child = _cardWidget(card);
+    if (card.style != null || card.color != null) {
+      child = CardOverride(
+        style: card.style,
+        color: card.color == null ? null : Color(card.color!),
+        child: child,
+      );
+    }
     if (widget.editing) {
       final accent = ConfigScope.of(context).accent;
       child = GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => _showCardSettings(context, card, layout),
         onPanStart: (_) => setState(() {
           _dragId = card.id;
           _drag = Offset.zero;
@@ -1515,6 +1892,8 @@ class _EntityCard extends StatelessWidget {
         (st?['attributes'] as Map?)?['friendly_name'] as String? ?? entityId;
     final state = st?['state'] as String? ?? '—';
     final on = state == 'on';
+    final accent =
+        CardOverride.maybeOf(context)?.color ?? ConfigScope.of(context).accent;
     return LiquidGlass(
       child: Padding(
         padding: EdgeInsets.all(16 * s),
@@ -1524,9 +1903,7 @@ class _EntityCard extends StatelessWidget {
           children: [
             Icon(entityIcon(entityId, on),
                 size: 26 * s,
-                color: on
-                    ? ConfigScope.of(context).accent
-                    : const Color(0xCCFFFFFF)),
+                color: on ? accent : const Color(0xCCFFFFFF)),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -1880,11 +2257,16 @@ class _LiquidGlassState extends State<LiquidGlass> {
   @override
   Widget build(BuildContext context) {
     final cfg = ConfigScope.of(context);
+    final ov = CardOverride.maybeOf(context);
+    final cardColor = ov?.color ?? cfg.cardColor;
     final radius = cfg.cornerRadius;
     final r = BorderRadius.circular(radius);
 
     // forceFrosted (idle weather card) always blurs the real background.
-    var style = widget.forceFrosted ? CardStyle.frosted : cfg.cardStyle;
+    // Otherwise a per-card override wins over the global cardStyle.
+    var style = widget.forceFrosted
+        ? CardStyle.frosted
+        : (ov?.style ?? cfg.cardStyle);
     if (style == CardStyle.liquidGlass && glassProgram == null) {
       style = CardStyle.frosted;
     }
@@ -1921,7 +2303,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
               height: widget.height,
               decoration: BoxDecoration(
                 borderRadius: r,
-                color: cfg.cardColor.withValues(alpha: 0.12),
+                color: cardColor.withValues(alpha: 0.12),
                 border: Border.all(color: const Color(0x26FFFFFF)),
               ),
               child: widget.child,
@@ -1933,7 +2315,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
           height: widget.height,
           decoration: BoxDecoration(
             borderRadius: r,
-            color: cfg.cardColor.withValues(alpha: 0.92),
+            color: cardColor.withValues(alpha: 0.92),
             border: Border.all(color: const Color(0x1FFFFFFF)),
             boxShadow: const [
               BoxShadow(
@@ -1951,7 +2333,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
             borderRadius: r,
             color: const Color(0x14FFFFFF),
             border: Border.all(
-                color: cfg.cardColor.withValues(alpha: 0.75), width: 1.5),
+                color: cardColor.withValues(alpha: 0.75), width: 1.5),
           ),
           child: widget.child,
         );

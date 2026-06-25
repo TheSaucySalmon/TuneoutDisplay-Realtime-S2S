@@ -1783,15 +1783,20 @@ class _GridDashboardState extends State<GridDashboard> {
     }
     if (widget.editing) {
       final accent = ConfigScope.of(context).accent;
+      // Tap opens settings; press-and-hold then drag moves the card. Using
+      // long-press for drag (instead of a pan recognizer) frees up plain taps,
+      // which a pan recognizer would otherwise swallow on a touchscreen where
+      // every contact carries slight movement.
       child = GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _showCardSettings(context, card, layout),
-        onPanStart: (_) => setState(() {
+        onLongPressStart: (_) => setState(() {
           _dragId = card.id;
           _drag = Offset.zero;
         }),
-        onPanUpdate: (d) => setState(() => _drag += d.delta),
-        onPanEnd: (_) {
+        onLongPressMoveUpdate: (d) =>
+            setState(() => _drag = d.localOffsetFromOrigin),
+        onLongPressEnd: (_) {
           final newCol = ((card.col * stepX + _drag.dx) / stepX)
               .round()
               .clamp(0, kGridCols - card.w);
@@ -1818,6 +1823,23 @@ class _GridDashboardState extends State<GridDashboard> {
                         BorderRadius.circular(ConfigScope.of(context).cornerRadius),
                     border: Border.all(color: accent, width: 2),
                   ),
+                ),
+              ),
+            ),
+            // Settings (gear) — explicit, always-reliable edit affordance.
+            Positioned(
+              top: 6,
+              left: 6,
+              child: GestureDetector(
+                onTap: () => _showCardSettings(context, card, layout),
+                child: Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: accent.withValues(alpha: 0.9),
+                  ),
+                  child: const Icon(Icons.tune_rounded,
+                      size: 18, color: Colors.white),
                 ),
               ),
             ),

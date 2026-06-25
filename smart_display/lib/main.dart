@@ -951,6 +951,174 @@ class _EditBar extends StatelessWidget {
 
 /// Opens the entity picker. With no [onPick] it adds a new card; pass [onPick]
 /// to rebind an existing card to the chosen entity instead.
+/// In-app touchscreen keyboard. The Flutter Linux (GTK) embedder does not
+/// summon a system on-screen keyboard, and the Pi kiosk has no physical one,
+/// so text fields drive this widget instead. Operates on a [TextEditingController].
+class OnScreenKeyboard extends StatefulWidget {
+  final TextEditingController controller;
+  final VoidCallback? onDone;
+  const OnScreenKeyboard({super.key, required this.controller, this.onDone});
+  @override
+  State<OnScreenKeyboard> createState() => _OnScreenKeyboardState();
+}
+
+class _OnScreenKeyboardState extends State<OnScreenKeyboard> {
+  bool _shift = false;
+  bool _sym = false;
+
+  static const _letters = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+  static const _symbols = ['1234567890', '-_.@:/', '#%&*+,?!'];
+
+  void _insert(String s) {
+    final c = widget.controller;
+    final out = _shift ? s.toUpperCase() : s;
+    c.text = c.text + out;
+    c.selection = TextSelection.collapsed(offset: c.text.length);
+    if (_shift) setState(() => _shift = false);
+  }
+
+  void _backspace() {
+    final c = widget.controller;
+    if (c.text.isEmpty) return;
+    c.text = c.text.substring(0, c.text.length - 1);
+    c.selection = TextSelection.collapsed(offset: c.text.length);
+  }
+
+  Widget _key(String label, VoidCallback onTap,
+      {int flex = 1, Color? bg, Widget? child}) {
+    return Expanded(
+      flex: flex,
+      child: Padding(
+        padding: const EdgeInsets.all(3),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: bg ?? const Color(0x1FFFFFFF),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: child ??
+                Text(label,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(String chars) => Row(
+        children: [for (final ch in chars.split('')) _key(_shift ? ch.toUpperCase() : ch, () => _insert(ch))],
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ConfigScope.of(context).accent;
+    final rows = _sym ? _symbols : _letters;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 6, 4, 6),
+      decoration: const BoxDecoration(color: Color(0xFF0C131C)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _row(rows[0]),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: _row(rows[1]),
+          ),
+          Row(
+            children: [
+              if (!_sym)
+                _key('', () => setState(() => _shift = !_shift),
+                    flex: 2,
+                    bg: _shift ? accent : const Color(0x33FFFFFF),
+                    child: const Icon(Icons.arrow_upward,
+                        color: Colors.white, size: 20))
+              else
+                const Spacer(flex: 2),
+              for (final ch in rows[2].split(''))
+                _key(_shift ? ch.toUpperCase() : ch, () => _insert(ch)),
+              _key('', _backspace,
+                  flex: 2,
+                  bg: const Color(0x33FFFFFF),
+                  child: const Icon(Icons.backspace_outlined,
+                      color: Colors.white, size: 20)),
+            ],
+          ),
+          Row(
+            children: [
+              _key(_sym ? 'ABC' : '123', () => setState(() => _sym = !_sym),
+                  flex: 3, bg: const Color(0x33FFFFFF)),
+              _key('space', () => _insert(' '), flex: 6),
+              _key('Done', () => widget.onDone?.call(),
+                  flex: 3, bg: accent),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A focused text-entry sheet (label + field + on-screen keyboard). Used where
+/// inline keyboard space is tight (e.g. the card editor name field).
+void _showTextInput(BuildContext context,
+    {required String title,
+    required TextEditingController controller,
+    required ValueChanged<String> onChanged}) {
+  // The on-screen keyboard mutates the controller programmatically, which does
+  // NOT trigger TextField.onChanged — so listen to the controller and detach
+  // when the sheet closes.
+  void listener() => onChanged(controller.text);
+  controller.addListener(listener);
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xF2121A24),
+    builder: (sheetCtx) => ConfigScope(
+      config: ConfigScope.of(context),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, MediaQuery.viewInsetsOf(sheetCtx).bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              readOnly: true,
+              showCursor: true,
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: const Color(0x14FFFFFF),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 10),
+            OnScreenKeyboard(
+              controller: controller,
+              onDone: () => Navigator.pop(sheetCtx),
+            ),
+          ],
+        ),
+      ),
+    ),
+  ).whenComplete(() => controller.removeListener(listener));
+}
+
 void _showEntityPicker(BuildContext context, {void Function(String)? onPick}) {
   // EntityScope lives inside RootShell, below the Navigator, so a modal route
   // can't inherit it — capture and re-inject. Caller's context must be below
@@ -977,13 +1145,25 @@ class _EntityPicker extends StatefulWidget {
 }
 
 class _EntityPickerState extends State<_EntityPicker> {
-  String _q = '';
+  final TextEditingController _qc = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _qc.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _qc.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final cat = EntityScope.of(context);
     final layout = LayoutScope.of(context);
-    final q = _q.toLowerCase();
+    final q = _qc.text.toLowerCase();
     final items = cat.all.where((e) {
       if (q.isEmpty) return true;
       final fn =
@@ -994,15 +1174,14 @@ class _EntityPickerState extends State<_EntityPicker> {
       ..sort((a, b) => a.key.compareTo(b.key));
 
     return Container(
-      height: MediaQuery.sizeOf(context).height * 0.72,
-      padding: EdgeInsets.fromLTRB(
-          16, 12, 16, MediaQuery.viewInsetsOf(context).bottom + 16),
+      height: MediaQuery.sizeOf(context).height * 0.92,
       decoration: const BoxDecoration(
         color: Color(0xF2121A24),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         children: [
+          const SizedBox(height: 12),
           Container(
             width: 44,
             height: 5,
@@ -1010,29 +1189,39 @@ class _EntityPickerState extends State<_EntityPicker> {
                 color: const Color(0x40FFFFFF),
                 borderRadius: BorderRadius.circular(3)),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            style: const TextStyle(color: Colors.white),
-            onChanged: (v) => setState(() => _q = v),
-            decoration: InputDecoration(
-              hintText: 'Search ${cat.count} entities…',
-              hintStyle: const TextStyle(color: Color(0x80FFFFFF)),
-              prefixIcon: const Icon(Icons.search, color: Color(0x80FFFFFF)),
-              filled: true,
-              fillColor: const Color(0x14FFFFFF),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: TextField(
+              controller: _qc,
+              readOnly: true, // driven by the on-screen keyboard below
+              showCursor: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Search ${cat.count} entities…',
+                hintStyle: const TextStyle(color: Color(0x80FFFFFF)),
+                prefixIcon: const Icon(Icons.search, color: Color(0x80FFFFFF)),
+                suffixIcon: _qc.text.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear, color: Color(0x80FFFFFF)),
+                        onPressed: () => _qc.clear(),
+                      ),
+                filled: true,
+                fillColor: const Color(0x14FFFFFF),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 8),
           Expanded(
             child: items.isEmpty
                 ? const Center(
                     child: Text('No entities (is HA connected?)',
                         style: TextStyle(color: Color(0x80FFFFFF))))
                 : ListView.builder(
+                    padding: EdgeInsets.zero,
                     itemCount: items.length,
                     itemBuilder: (_, i) {
                       final e = items[i];
@@ -1059,6 +1248,10 @@ class _EntityPickerState extends State<_EntityPicker> {
                       );
                     },
                   ),
+          ),
+          OnScreenKeyboard(
+            controller: _qc,
+            onDone: () => FocusScope.of(context).unfocus(),
           ),
         ],
       ),
@@ -1317,23 +1510,41 @@ class _CardEditorState extends State<_CardEditor> {
           _entityRow(),
           const SizedBox(height: 20),
         ],
-        _label('Name'),
+        _label(card.kind == CardKind.calendar ? 'Title' : 'Name'),
         const SizedBox(height: 8),
-        TextField(
-          controller: _name,
-          style: const TextStyle(color: Colors.white),
-          onChanged: (v) =>
-              _set(() => card.name = v.trim().isEmpty ? null : v.trim()),
-          decoration: InputDecoration(
-            hintText: 'Default (friendly name)',
-            hintStyle: const TextStyle(color: Color(0x66FFFFFF)),
-            filled: true,
-            fillColor: const Color(0x14FFFFFF),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        GestureDetector(
+          onTap: () => _showTextInput(
+            context,
+            title: card.kind == CardKind.calendar ? 'Title' : 'Name',
+            controller: _name,
+            onChanged: (v) =>
+                _set(() => card.name = v.trim().isEmpty ? null : v.trim()),
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0x14FFFFFF),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    card.name?.isNotEmpty == true
+                        ? card.name!
+                        : 'Default (friendly name)',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: card.name?.isNotEmpty == true
+                            ? Colors.white
+                            : const Color(0x66FFFFFF)),
+                  ),
+                ),
+                const Icon(Icons.keyboard_alt_outlined,
+                    color: Color(0x80FFFFFF), size: 20),
+              ],
+            ),
           ),
         ),
         if (card.kind == CardKind.entity) ...[
@@ -2088,9 +2299,13 @@ class _GridDashboardState extends State<GridDashboard> {
     final s = _scale(context);
     final layout = LayoutScope.of(context);
     final gap = 14 * s;
+    // In edit mode the top bar (Editing / palette / add / Done) overlays the
+    // top of the screen; inset the grid so the top-row cards' gear/delete
+    // buttons aren't hidden behind it and stay tappable.
+    final topInset = widget.editing ? 66.0 : 0.0;
     return SafeArea(
       child: Padding(
-        padding: EdgeInsets.all(gap),
+        padding: EdgeInsets.fromLTRB(gap, gap + topInset, gap, gap),
         child: LayoutBuilder(builder: (ctx, c) {
           final cellW = (c.maxWidth - gap * (kGridCols - 1)) / kGridCols;
           final cellH = (c.maxHeight - gap * (kGridRows - 1)) / kGridRows;

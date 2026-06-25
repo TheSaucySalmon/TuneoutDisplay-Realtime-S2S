@@ -4,8 +4,14 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes;
+import 'package:flutter/foundation.dart'
+    show consolidateHttpClientResponseBytes, visibleForTesting;
 import 'package:flutter/material.dart';
+
+// Dev-only on-host test harness (demo entity seed + auto-open more-info). Every
+// hook is gated behind SMARTDISPLAY_* env vars that are never set on the Pi, so
+// this is fully inert in production. See dev_harness.dart.
+part 'dev_harness.dart';
 
 /// Loaded once at startup; null if the GPU/back-end can't compile it, in which
 /// case [LiquidGlass] falls back to a plain frosted panel.
@@ -487,7 +493,10 @@ class EntityCatalog extends ChangeNotifier {
     _ha = ha;
     _configured = ha.ready;
     notifyListeners();
-    if (!ha.ready) return;
+    if (!ha.ready) {
+      if (_maybeSeedDemo()) notifyListeners(); // dev-only, env-gated; no-op in prod
+      return;
+    }
     await _snapshot();
     _connect();
   }
@@ -718,6 +727,7 @@ class _RootShellState extends State<RootShell> {
     });
     _brightness.start();
     _resetIdleTimer();
+    _maybeAutoOpenMoreInfo(); // dev-only, env-gated; no-op in production
   }
 
   @override
@@ -2606,10 +2616,7 @@ class _MoreInfoSheetState extends State<_MoreInfoSheet> {
     switch (_domain) {
       case 'light':
         if (!on) return null;
-        final b = (attrs['brightness'] as num?)?.toDouble() ?? 255;
-        return _slider('bri', 'Brightness', b / 255 * 100, 0, 100,
-            (v) => _svc('turn_on', {'brightness_pct': v.round()}),
-            suffix: '%');
+        return _light(attrs);
       case 'fan':
         if (!on) return null;
         final p = (attrs['percentage'] as num?)?.toDouble() ?? 0;
@@ -2620,6 +2627,16 @@ class _MoreInfoSheetState extends State<_MoreInfoSheet> {
         return _climate(attrs, state, accent);
       case 'cover':
         return _cover(attrs);
+      case 'valve':
+        return _valve(attrs);
+      case 'water_heater':
+        return _waterHeater(attrs, state, accent);
+      case 'humidifier':
+        return _humidifier(attrs, on, accent);
+      case 'alarm_control_panel':
+        return _alarm(attrs, state);
+      case 'vacuum':
+        return _vacuum(attrs);
       case 'media_player':
         return _media(attrs);
       case 'lock':
@@ -2674,8 +2691,57 @@ class _MoreInfoSheetState extends State<_MoreInfoSheet> {
           const SizedBox(width: 10),
           _btn('Cancel', () => _svc('cancel')),
         ]);
+      case 'date':
+        return _wideBtn('Set date', accent, () => _pickDate(state));
+      case 'time':
+        return _wideBtn('Set time', accent, () => _pickTime(state));
+      case 'datetime':
+        return _wideBtn('Set date & time', accent, () => _pickDateTime(state));
     }
     return null;
+  }
+
+  static String _pad2(int n) => n.toString().padLeft(2, '0');
+
+  Future<void> _pickDate(String state) async {
+    final init = DateTime.tryParse(state) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: init,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    _svc('set_value',
+        {'date': '${picked.year}-${_pad2(picked.month)}-${_pad2(picked.day)}'});
+  }
+
+  Future<void> _pickTime(String state) async {
+    final p = state.split(':');
+    final init = TimeOfDay(
+        hour: int.tryParse(p.isNotEmpty ? p[0] : '') ?? 0,
+        minute: int.tryParse(p.length > 1 ? p[1] : '') ?? 0);
+    final picked = await showTimePicker(context: context, initialTime: init);
+    if (picked == null || !mounted) return;
+    _svc('set_value', {'time': '${_pad2(picked.hour)}:${_pad2(picked.minute)}:00'});
+  }
+
+  Future<void> _pickDateTime(String state) async {
+    final init = DateTime.tryParse(state) ?? DateTime.now();
+    final d = await showDatePicker(
+      context: context,
+      initialDate: init,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (d == null || !mounted) return;
+    final t = await showTimePicker(
+        context: context, initialTime: TimeOfDay.fromDateTime(init));
+    if (t == null || !mounted) return;
+    _svc('set_value', {
+      'datetime':
+          '${d.year}-${_pad2(d.month)}-${_pad2(d.day)} ${_pad2(t.hour)}:${_pad2(t.minute)}:00'
+    });
   }
 
   Widget _climate(Map attrs, String state, Color accent) {
@@ -2735,6 +2801,11 @@ class _MoreInfoSheetState extends State<_MoreInfoSheet> {
 
   Widget _media(Map attrs) {
     final vol = (attrs['volume_level'] as num?)?.toDouble();
+    final source = attrs['source'] as String?;
+    final sources = (attrs['source_list'] as List?)?.cast<String>() ?? const [];
+    final soundMode = attrs['sound_mode'] as String?;
+    final soundModes =
+        (attrs['sound_mode_list'] as List?)?.cast<String>() ?? const [];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2749,6 +2820,229 @@ class _MoreInfoSheetState extends State<_MoreInfoSheet> {
           _slider('vol', 'Volume', vol * 100, 0, 100,
               (v) => _svc('volume_set', {'volume_level': v / 100}),
               suffix: '%'),
+        if (sources.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Text('Source', style: TextStyle(color: Color(0x99FFFFFF))),
+          const SizedBox(height: 8),
+          _options(sources, source ?? '',
+              (s) => _svc('select_source', {'source': s})),
+        ],
+        if (soundModes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Text('Sound mode', style: TextStyle(color: Color(0x99FFFFFF))),
+          const SizedBox(height: 8),
+          _options(soundModes, soundMode ?? '',
+              (s) => _svc('select_sound_mode', {'sound_mode': s})),
+        ],
+      ],
+    );
+  }
+
+  // Light: brightness, plus color-temperature and/or a color swatch row when the
+  // light's supported_color_modes advertise them.
+  static const _kColorModes = ['hs', 'rgb', 'rgbw', 'rgbww', 'xy'];
+  Widget _light(Map attrs) {
+    final b = (attrs['brightness'] as num?)?.toDouble() ?? 255;
+    final modes =
+        (attrs['supported_color_modes'] as List?)?.cast<String>() ?? const [];
+    final hasTemp = modes.contains('color_temp');
+    final hasColor = modes.any(_kColorModes.contains);
+    final minK = (attrs['min_color_temp_kelvin'] as num?)?.toDouble() ?? 2000;
+    final maxK = (attrs['max_color_temp_kelvin'] as num?)?.toDouble() ?? 6500;
+    final curK =
+        (attrs['color_temp_kelvin'] as num?)?.toDouble() ?? (minK + maxK) / 2;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _slider('bri', 'Brightness', b / 255 * 100, 0, 100,
+            (v) => _svc('turn_on', {'brightness_pct': v.round()}),
+            suffix: '%'),
+        if (hasTemp)
+          _slider('ct', 'Color temp', curK.clamp(minK, maxK), minK, maxK,
+              (v) => _svc('turn_on', {'color_temp_kelvin': v.round()}),
+              suffix: 'K'),
+        if (hasColor) ...[
+          const SizedBox(height: 12),
+          const Text('Color', style: TextStyle(color: Color(0x99FFFFFF))),
+          const SizedBox(height: 10),
+          _colorSwatches(),
+        ],
+      ],
+    );
+  }
+
+  Widget _colorSwatches() {
+    const swatches = <List<int>>[
+      [255, 0, 0], [255, 128, 0], [255, 225, 0], [0, 220, 60],
+      [0, 200, 255], [0, 60, 255], [150, 0, 240], [255, 0, 200],
+      [255, 255, 255],
+    ];
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        for (final c in swatches)
+          GestureDetector(
+            onTap: () => _svc('turn_on', {'rgb_color': c}),
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Color.fromARGB(255, c[0], c[1], c[2]),
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0x33FFFFFF)),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // Alarm/vacuum capabilities are only knowable from the supported_features
+  // bitmask (no attribute reveals them). These bit values come from HA core's
+  // const files; they're stable and unchanged for years. See memory note
+  // "supported-features-bitmask".
+  Widget _alarm(Map attrs, String state) {
+    final f = (attrs['supported_features'] as num?)?.toInt() ?? 0;
+    const armHome = 1, armAway = 2, armNight = 4, armCustom = 16, armVacation = 32;
+    // NOTE: panels with code_arm_required / code_format need a code we don't yet
+    // collect — a PIN pad is a follow-up. Works today for codeless panels.
+    final btns = <Widget>[
+      if (state != 'disarmed') _btn('Disarm', () => _svc('alarm_disarm')),
+      if (f & armHome != 0) _btn('Arm Home', () => _svc('alarm_arm_home')),
+      if (f & armAway != 0) _btn('Arm Away', () => _svc('alarm_arm_away')),
+      if (f & armNight != 0) _btn('Arm Night', () => _svc('alarm_arm_night')),
+      if (f & armVacation != 0)
+        _btn('Arm Vacation', () => _svc('alarm_arm_vacation')),
+      if (f & armCustom != 0)
+        _btn('Custom Bypass', () => _svc('alarm_arm_custom_bypass')),
+    ];
+    return Wrap(spacing: 10, runSpacing: 10, children: btns);
+  }
+
+  Widget _vacuum(Map attrs) {
+    final f = (attrs['supported_features'] as num?)?.toInt() ?? 0;
+    final speed = attrs['fan_speed'] as String?;
+    final speeds = (attrs['fan_speed_list'] as List?)?.cast<String>() ?? const [];
+    const pause = 4,
+        stop = 8,
+        returnHome = 16,
+        fanSpeed = 32,
+        locate = 512,
+        cleanSpot = 1024,
+        start = 8192;
+    final btns = <Widget>[
+      if (f & start != 0) _btn('Start', () => _svc('start')),
+      if (f & pause != 0) _btn('Pause', () => _svc('pause')),
+      if (f & stop != 0) _btn('Stop', () => _svc('stop')),
+      if (f & returnHome != 0) _btn('Dock', () => _svc('return_to_base')),
+      if (f & locate != 0) _btn('Locate', () => _svc('locate')),
+      if (f & cleanSpot != 0) _btn('Spot', () => _svc('clean_spot')),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(spacing: 10, runSpacing: 10, children: btns),
+        if (f & fanSpeed != 0 && speeds.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          const Text('Fan speed', style: TextStyle(color: Color(0x99FFFFFF))),
+          const SizedBox(height: 8),
+          _options(speeds, speed ?? '',
+              (s) => _svc('set_fan_speed', {'fan_speed': s})),
+        ],
+      ],
+    );
+  }
+
+  Widget _valve(Map attrs) {
+    // Valve exposes current_position only when reports_position is true.
+    final pos = (attrs['current_position'] as num?)?.toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          _btn('Open', () => _svc('open_valve')),
+          const SizedBox(width: 10),
+          _btn('Stop', () => _svc('stop_valve')),
+          const SizedBox(width: 10),
+          _btn('Close', () => _svc('close_valve')),
+        ]),
+        if (pos != null)
+          _slider('valve', 'Position', pos, 0, 100,
+              (v) => _svc('set_valve_position', {'position': v.round()}),
+              suffix: '%'),
+      ],
+    );
+  }
+
+  Widget _waterHeater(Map attrs, String state, Color accent) {
+    final cur = attrs['current_temperature'];
+    final target = (attrs['temperature'] as num?)?.toDouble();
+    final step = (attrs['target_temp_step'] as num?)?.toDouble() ?? 1.0;
+    final lo = (attrs['min_temp'] as num?)?.toDouble();
+    final hi = (attrs['max_temp'] as num?)?.toDouble();
+    // water_heater state IS the current operation mode (eco, electric, …).
+    final modes = (attrs['operation_list'] as List?)?.cast<String>() ?? const [];
+    final away = attrs['away_mode'] as String?;
+    double clampT(double t) =>
+        t.clamp(lo ?? double.negativeInfinity, hi ?? double.infinity);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (cur != null)
+          Text('Current: $cur°',
+              style: const TextStyle(color: Color(0x99FFFFFF))),
+        if (target != null) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            _btn('−',
+                () => _svc('set_temperature', {'temperature': clampT(target - step)})),
+            const SizedBox(width: 14),
+            Text('${target.toStringAsFixed(target == target.roundToDouble() ? 0 : 1)}°',
+                style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white)),
+            const SizedBox(width: 14),
+            _btn('+',
+                () => _svc('set_temperature', {'temperature': clampT(target + step)})),
+          ]),
+        ],
+        if (modes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _options(
+              modes, state, (m) => _svc('set_operation_mode', {'operation_mode': m})),
+        ],
+        if (away != null) ...[
+          const SizedBox(height: 12),
+          _pill('Away', away == 'on', accent,
+              () => _svc('set_away_mode', {'away_mode': away != 'on'})),
+        ],
+      ],
+    );
+  }
+
+  Widget _humidifier(Map attrs, bool on, Color accent) {
+    final cur = attrs['current_humidity'];
+    final target = (attrs['humidity'] as num?)?.toDouble();
+    final lo = (attrs['min_humidity'] as num?)?.toDouble() ?? 0;
+    final hi = (attrs['max_humidity'] as num?)?.toDouble() ?? 100;
+    final mode = attrs['mode'] as String? ?? '';
+    final modes = (attrs['available_modes'] as List?)?.cast<String>() ?? const [];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (cur != null)
+          Text('Current: $cur%',
+              style: const TextStyle(color: Color(0x99FFFFFF))),
+        if (target != null)
+          _slider('hum', 'Target', target, lo, hi,
+              (v) => _svc('set_humidity', {'humidity': v.round()}),
+              suffix: '%'),
+        if (modes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _options(modes, mode, (m) => _svc('set_mode', {'mode': m})),
+        ],
       ],
     );
   }

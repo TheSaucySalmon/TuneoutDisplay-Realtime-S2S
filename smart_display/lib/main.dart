@@ -427,8 +427,11 @@ class HaClient {
     }
   }
 
-  Future<bool> callService(
-      String domain, String service, String entityId) async {
+  /// Call a service. [data] carries optional parameters (brightness_pct,
+  /// position, value, option, temperature, volume_level, hvac_mode, …) merged
+  /// alongside the target entity_id.
+  Future<bool> callService(String domain, String service, String entityId,
+      [Map<String, dynamic>? data]) async {
     if (!ready) return false;
     try {
       final client = HttpClient()
@@ -437,7 +440,7 @@ class HaClient {
           await client.postUrl(Uri.parse('$_url/api/services/$domain/$service'));
       req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       req.headers.contentType = ContentType.json;
-      req.add(utf8.encode(jsonEncode({'entity_id': entityId})));
+      req.add(utf8.encode(jsonEncode({'entity_id': entityId, ...?data})));
       final resp = await req.close();
       await resp.drain<void>(null);
       client.close();
@@ -2458,135 +2461,414 @@ void _showMoreInfo(BuildContext context, String entityId) {
   );
 }
 
-class _MoreInfoSheet extends StatelessWidget {
+/// Domains that show a header on/off pill.
+const _kToggleable = {
+  'light', 'switch', 'fan', 'input_boolean', 'siren', 'humidifier',
+  'automation', 'group',
+};
+
+class _MoreInfoSheet extends StatefulWidget {
   final String entityId;
   const _MoreInfoSheet({required this.entityId});
+  @override
+  State<_MoreInfoSheet> createState() => _MoreInfoSheetState();
+}
 
-  bool get _toggleable {
-    const domains = {'light', 'switch', 'fan', 'input_boolean', 'media_player'};
-    return domains.contains(entityId.split('.').first);
+class _MoreInfoSheetState extends State<_MoreInfoSheet> {
+  // Live slider value while dragging (keyed by control); cleared on release so
+  // the control tracks the entity's real state again.
+  final Map<String, double> _drag = {};
+  final TextEditingController _text = TextEditingController();
+
+  String get _id => widget.entityId;
+  String get _domain => entityDomain(_id);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _svc(String service, [Map<String, dynamic>? data]) {
+    // Groups toggle via the homeassistant domain; everything else via its own.
+    final d =
+        (_domain == 'group' && (service.startsWith('turn') || service == 'toggle'))
+            ? 'homeassistant'
+            : _domain;
+    HaScope.of(context).callService(d, service, _id, data);
   }
 
   @override
   Widget build(BuildContext context) {
     final cat = EntityScope.of(context);
-    final st = cat.state(entityId);
+    final st = cat.state(_id);
     final attrs = (st?['attributes'] as Map?) ?? const {};
-    final name = attrs['friendly_name'] as String? ?? entityId;
+    final name = attrs['friendly_name'] as String? ?? _id;
     final state = st?['state'] as String? ?? '—';
     final on = state == 'on';
     final accent = ConfigScope.of(context).accent;
+    final controls = _controls(attrs, state, on, accent);
     final rows = attrs.entries
-        .where((e) => e.key != 'friendly_name')
+        .where((e) => e.key != 'friendly_name' && e.key != 'icon')
         .take(12)
         .toList();
 
     return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
       decoration: const BoxDecoration(
         color: Color(0xF2121A24),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                  color: const Color(0x40FFFFFF),
-                  borderRadius: BorderRadius.circular(3)),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Icon(entityIcon(entityId, on),
-                  color: on ? accent : const Color(0xCCFFFFFF), size: 30),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white)),
-                    Text(state,
-                        style: const TextStyle(color: Color(0x99FFFFFF))),
-                  ],
-                ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                    color: const Color(0x40FFFFFF),
+                    borderRadius: BorderRadius.circular(3)),
               ),
-              if (_toggleable)
-                _ToggleButton(entityId: entityId, on: on, accent: accent),
-            ],
-          ),
-          if (rows.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            const Divider(color: Color(0x1FFFFFFF), height: 1),
-            const SizedBox(height: 12),
-            ...rows.map((e) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Icon(entityIcon(_id, on),
+                    color: on ? accent : const Color(0xCCFFFFFF), size: 30),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(e.key.replaceAll('_', ' '),
-                            style: const TextStyle(color: Color(0x99FFFFFF))),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text('${e.value}',
-                            textAlign: TextAlign.right,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white)),
-                      ),
+                      Text(name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white)),
+                      Text(_prettyState(state, attrs),
+                          style: const TextStyle(color: Color(0x99FFFFFF))),
                     ],
                   ),
-                )),
+                ),
+                if (_kToggleable.contains(_domain))
+                  _pill(on ? 'On' : 'Off', on, accent, () => _svc('toggle')),
+              ],
+            ),
+            if (controls != null) ...[
+              const SizedBox(height: 18),
+              controls,
+            ],
+            if (rows.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const Divider(color: Color(0x1FFFFFFF), height: 1),
+              const SizedBox(height: 12),
+              ...rows.map((e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(e.key.replaceAll('_', ' '),
+                              style: const TextStyle(color: Color(0x99FFFFFF))),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text('${e.value}',
+                              textAlign: TextAlign.right,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white)),
+                        ),
+                      ],
+                    ),
+                  )),
+            ],
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ToggleButton extends StatefulWidget {
-  final String entityId;
-  final bool on;
-  final Color accent;
-  const _ToggleButton(
-      {required this.entityId, required this.on, required this.accent});
-  @override
-  State<_ToggleButton> createState() => _ToggleButtonState();
-}
-
-class _ToggleButtonState extends State<_ToggleButton> {
-  @override
-  Widget build(BuildContext context) {
-    final on = widget.on;
-    return GestureDetector(
-      onTap: () => HaScope.of(context).callService(
-          widget.entityId.split('.').first, 'toggle', widget.entityId),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        decoration: BoxDecoration(
-          color: on ? widget.accent : const Color(0x22FFFFFF),
-          borderRadius: BorderRadius.circular(20),
         ),
-        child: Text(on ? 'On' : 'Off',
-            style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.w700)),
       ),
     );
   }
+
+  String _prettyState(String state, Map attrs) {
+    final unit = attrs['unit_of_measurement'];
+    return unit == null ? state : '$state $unit';
+  }
+
+  // ── Per-domain control blocks ───────────────────────────────────────────
+  Widget? _controls(Map attrs, String state, bool on, Color accent) {
+    switch (_domain) {
+      case 'light':
+        if (!on) return null;
+        final b = (attrs['brightness'] as num?)?.toDouble() ?? 255;
+        return _slider('bri', 'Brightness', b / 255 * 100, 0, 100,
+            (v) => _svc('turn_on', {'brightness_pct': v.round()}),
+            suffix: '%');
+      case 'fan':
+        if (!on) return null;
+        final p = (attrs['percentage'] as num?)?.toDouble() ?? 0;
+        return _slider('fan', 'Speed', p, 0, 100,
+            (v) => _svc('set_percentage', {'percentage': v.round()}),
+            suffix: '%');
+      case 'climate':
+        return _climate(attrs, state, accent);
+      case 'cover':
+        return _cover(attrs);
+      case 'media_player':
+        return _media(attrs);
+      case 'lock':
+        return Row(children: [
+          _btn('Lock', () => _svc('lock')),
+          const SizedBox(width: 10),
+          _btn('Unlock', () => _svc('unlock')),
+        ]);
+      case 'scene':
+        return _wideBtn('Activate', accent, () => _svc('turn_on'));
+      case 'script':
+        return _wideBtn('Run', accent, () => _svc('turn_on'));
+      case 'automation':
+        return _wideBtn('Trigger', accent, () => _svc('trigger'));
+      case 'input_button':
+      case 'button':
+        return _wideBtn('Press', accent, () => _svc('press'));
+      case 'input_number':
+      case 'number':
+        final min = (attrs['min'] as num?)?.toDouble() ?? 0;
+        final max = (attrs['max'] as num?)?.toDouble() ?? 100;
+        final val = double.tryParse(state) ?? min;
+        return _slider('num', 'Value', val, min, max,
+            (v) => _svc('set_value', {'value': v}),
+            step: (attrs['step'] as num?)?.toDouble());
+      case 'input_select':
+      case 'select':
+        final opts = (attrs['options'] as List?)?.cast<String>() ?? const [];
+        return _options(opts, state, (o) => _svc('select_option', {'option': o}));
+      case 'input_text':
+      case 'text':
+        return _wideBtn('Edit text', accent, () {
+          _text.text = state == '—' ? '' : state;
+          _showTextInput(context,
+              title: 'Set value',
+              controller: _text,
+              onChanged: (v) => _svc('set_value', {'value': v}));
+        });
+      case 'counter':
+        return Row(children: [
+          _btn('−', () => _svc('decrement')),
+          const SizedBox(width: 10),
+          _btn('Reset', () => _svc('reset')),
+          const SizedBox(width: 10),
+          _btn('+', () => _svc('increment')),
+        ]);
+      case 'timer':
+        return Row(children: [
+          _btn('Start', () => _svc('start')),
+          const SizedBox(width: 10),
+          _btn('Pause', () => _svc('pause')),
+          const SizedBox(width: 10),
+          _btn('Cancel', () => _svc('cancel')),
+        ]);
+    }
+    return null;
+  }
+
+  Widget _climate(Map attrs, String state, Color accent) {
+    final cur = attrs['current_temperature'];
+    final target = (attrs['temperature'] as num?)?.toDouble();
+    final step = (attrs['target_temp_step'] as num?)?.toDouble() ?? 0.5;
+    final modes = (attrs['hvac_modes'] as List?)?.cast<String>() ?? const [];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (cur != null)
+          Text('Current: $cur°',
+              style: const TextStyle(color: Color(0x99FFFFFF))),
+        if (target != null) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            _btn('−',
+                () => _svc('set_temperature', {'temperature': target - step})),
+            const SizedBox(width: 14),
+            Text('${target.toStringAsFixed(1)}°',
+                style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white)),
+            const SizedBox(width: 14),
+            _btn('+',
+                () => _svc('set_temperature', {'temperature': target + step})),
+          ]),
+        ],
+        if (modes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _options(modes, state, (m) => _svc('set_hvac_mode', {'hvac_mode': m})),
+        ],
+      ],
+    );
+  }
+
+  Widget _cover(Map attrs) {
+    final pos = (attrs['current_position'] as num?)?.toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          _btn('Open', () => _svc('open_cover')),
+          const SizedBox(width: 10),
+          _btn('Stop', () => _svc('stop_cover')),
+          const SizedBox(width: 10),
+          _btn('Close', () => _svc('close_cover')),
+        ]),
+        if (pos != null)
+          _slider('cover', 'Position', pos, 0, 100,
+              (v) => _svc('set_cover_position', {'position': v.round()}),
+              suffix: '%'),
+      ],
+    );
+  }
+
+  Widget _media(Map attrs) {
+    final vol = (attrs['volume_level'] as num?)?.toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          _iconBtn(Icons.skip_previous, () => _svc('media_previous_track')),
+          const SizedBox(width: 16),
+          _iconBtn(Icons.play_arrow, () => _svc('media_play_pause'), big: true),
+          const SizedBox(width: 16),
+          _iconBtn(Icons.skip_next, () => _svc('media_next_track')),
+        ]),
+        if (vol != null)
+          _slider('vol', 'Volume', vol * 100, 0, 100,
+              (v) => _svc('volume_set', {'volume_level': v / 100}),
+              suffix: '%'),
+      ],
+    );
+  }
+
+  // ── Shared control widgets ──────────────────────────────────────────────
+  Widget _slider(String key, String label, double value, double min, double max,
+      ValueChanged<double> onEnd,
+      {String suffix = '', double? step}) {
+    final v = (_drag[key] ?? value).clamp(min, max);
+    final divisions =
+        step != null && step > 0 ? ((max - min) / step).round() : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Row(children: [
+          Text(label, style: const TextStyle(color: Color(0x99FFFFFF))),
+          const Spacer(),
+          Text('${v.round()}$suffix',
+              style: const TextStyle(color: Colors.white)),
+        ]),
+        Slider(
+          value: v,
+          min: min,
+          max: max,
+          divisions: divisions,
+          onChanged: (nv) => setState(() => _drag[key] = nv),
+          onChangeEnd: (nv) {
+            onEnd(nv);
+            setState(() => _drag.remove(key));
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _options(List<String> opts, String current, ValueChanged<String> onSel) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final o in opts)
+          GestureDetector(
+            onTap: () => onSel(o),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: o == current
+                    ? ConfigScope.of(context).accent
+                    : const Color(0x14FFFFFF),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Text(o,
+                  style: const TextStyle(color: Colors.white)),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _pill(String label, bool on, Color accent, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          decoration: BoxDecoration(
+            color: on ? accent : const Color(0x22FFFFFF),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(label,
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w700)),
+        ),
+      );
+
+  Widget _btn(String label, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(
+            color: const Color(0x1FFFFFFF),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(label,
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w600)),
+        ),
+      );
+
+  Widget _wideBtn(String label, Color accent, VoidCallback onTap) => SizedBox(
+        width: double.infinity,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: accent, borderRadius: BorderRadius.circular(14)),
+            child: Text(label,
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        ),
+      );
+
+  Widget _iconBtn(IconData icon, VoidCallback onTap, {bool big = false}) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: big ? 60 : 48,
+          height: big ? 60 : 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: big
+                ? ConfigScope.of(context).accent
+                : const Color(0x1FFFFFFF),
+          ),
+          child: Icon(icon, color: Colors.white, size: big ? 32 : 24),
+        ),
+      );
 }
 
 Widget _cardWidget(CardSpec card) {
@@ -2604,22 +2886,88 @@ Widget _cardWidget(CardSpec card) {
   }
 }
 
+String entityDomain(String id) {
+  final i = id.indexOf('.');
+  return i < 0 ? id : id.substring(0, i);
+}
+
 IconData entityIcon(String id, bool on) {
-  if (id.startsWith('light.')) {
-    return on ? Icons.lightbulb : Icons.lightbulb_outline;
+  switch (entityDomain(id)) {
+    case 'light':
+      return on ? Icons.lightbulb : Icons.lightbulb_outline;
+    case 'switch':
+    case 'input_boolean':
+      return on ? Icons.toggle_on : Icons.toggle_off_outlined;
+    case 'climate':
+      return Icons.thermostat;
+    case 'camera':
+      return Icons.videocam_rounded;
+    case 'media_player':
+      return Icons.speaker_rounded;
+    case 'scene':
+      return Icons.palette_outlined;
+    case 'script':
+      return Icons.code_rounded;
+    case 'automation':
+      return Icons.bolt_rounded;
+    case 'group':
+      return Icons.dashboard_customize_rounded;
+    case 'sensor':
+    case 'binary_sensor':
+      return Icons.sensors_rounded;
+    case 'fan':
+      return Icons.air_rounded;
+    case 'lock':
+      return on ? Icons.lock_open_rounded : Icons.lock_rounded;
+    case 'cover':
+      return Icons.blinds_rounded;
+    case 'valve':
+      return Icons.water_drop_outlined;
+    case 'vacuum':
+      return Icons.cleaning_services_rounded;
+    case 'humidifier':
+      return Icons.water_drop_rounded;
+    case 'water_heater':
+      return Icons.water_rounded;
+    case 'alarm_control_panel':
+      return Icons.shield_rounded;
+    case 'person':
+    case 'device_tracker':
+      return Icons.person_rounded;
+    case 'input_number':
+    case 'number':
+      return Icons.tag_rounded;
+    case 'input_select':
+    case 'select':
+      return Icons.list_rounded;
+    case 'input_text':
+    case 'text':
+      return Icons.text_fields_rounded;
+    case 'input_button':
+    case 'button':
+      return Icons.smart_button_rounded;
+    case 'input_datetime':
+    case 'date':
+    case 'time':
+    case 'datetime':
+      return Icons.schedule_rounded;
+    case 'counter':
+      return Icons.exposure_rounded;
+    case 'timer':
+      return Icons.timer_rounded;
+    case 'schedule':
+      return Icons.calendar_month_rounded;
+    case 'weather':
+      return Icons.cloud_rounded;
+    case 'update':
+      return Icons.system_update_rounded;
+    case 'siren':
+      return Icons.notifications_active_rounded;
+    case 'calendar':
+      return Icons.event_rounded;
+    case 'todo':
+      return Icons.checklist_rounded;
   }
-  if (id.startsWith('switch.')) return Icons.toggle_on_outlined;
-  if (id.startsWith('climate.')) return Icons.thermostat;
-  if (id.startsWith('camera.')) return Icons.videocam_rounded;
-  if (id.startsWith('media_player.')) return Icons.speaker_rounded;
-  if (id.startsWith('scene.') || id.startsWith('script.')) {
-    return Icons.movie_rounded;
-  }
-  if (id.startsWith('sensor.') || id.startsWith('binary_sensor.')) {
-    return Icons.sensors_rounded;
-  }
-  if (id.startsWith('fan.')) return Icons.air_rounded;
-  if (id.startsWith('lock.')) return Icons.lock_rounded;
   return Icons.devices_other_rounded;
 }
 

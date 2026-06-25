@@ -8,3 +8,6 @@ graphify-out/
 
 # Local HA documentation reference (not part of this project)
 Home Assistant Docs/
+
+# Local-only session onboarding brief (reference, not shipped)
+START_HERE.md

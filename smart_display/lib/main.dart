@@ -1116,6 +1116,20 @@ void _showCardSettings(BuildContext context, CardSpec card, AppLayout layout) {
   );
 }
 
+/// Small muted helper text shown under config fields that are placeholders or
+/// need a feature that isn't built yet.
+class _Note extends StatelessWidget {
+  final String text;
+  const _Note(this.text);
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Text(text,
+            style: const TextStyle(
+                color: Color(0x80FFFFFF), fontSize: 13, height: 1.3)),
+      );
+}
+
 /// HA-style per-card editor: a tabbed sheet (Config / Layout / Style) with a
 /// live preview of the real card. Changes apply and persist immediately.
 class _CardEditor extends StatefulWidget {
@@ -1350,6 +1364,36 @@ class _CardEditorState extends State<_CardEditor> {
               const ['Auto', '16:9', '4:3', '1:1'], card.aspect,
               (v) => _set(() => card.aspect = v)),
         ],
+        if (card.kind == CardKind.weather) ...[
+          const SizedBox(height: 8),
+          _toggle('Show current', card.showCurrent,
+              (v) => _set(() => card.showCurrent = v)),
+          _toggle('Show forecast', card.showForecast,
+              (v) => _set(() => card.showForecast = v)),
+          _toggle('Round temperature', card.roundTemp,
+              (v) => _set(() => card.roundTemp = v)),
+          const SizedBox(height: 12),
+          _label('Forecast type'),
+          const SizedBox(height: 8),
+          _options(const ['daily', 'hourly', 'twice_daily'],
+              const ['Daily', 'Hourly', 'Twice daily'], card.forecastType,
+              (v) => _set(() => card.forecastType = v)),
+          const _Note('Forecast options take effect once the multi-day '
+              'forecast view is added.'),
+        ],
+        if (card.kind == CardKind.calendar) ...[
+          const SizedBox(height: 12),
+          _label('Initial view'),
+          const SizedBox(height: 8),
+          _options(const ['month', 'day', 'list'],
+              const ['Month', 'Day', 'List week'], card.initialView,
+              (v) => _set(() => card.initialView = v)),
+          const _Note('Calendar is a placeholder; event sources (HA / CalDAV) '
+              'come later. These options are saved for then.'),
+        ],
+        if (card.kind == CardKind.haStatus)
+          const _Note('Live Home Assistant connection + entity count. '
+              'No per-card options beyond name, layout, and style.'),
         if (_hasEntity) ...[
           const SizedBox(height: 16),
           _label('Tap action'),
@@ -1358,12 +1402,6 @@ class _CardEditorState extends State<_CardEditor> {
               const ['More info', 'Toggle', 'None'], card.tap,
               (v) => _set(() => card.tap = v)),
         ],
-        if (!_hasEntity)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: Text('This card has no entity to configure.',
-                style: TextStyle(color: Color(0x80FFFFFF))),
-          ),
       ],
     );
   }
@@ -1861,6 +1899,15 @@ class CardSpec {
   /// Camera aspect ratio: null (fill grid) | '16:9' | '4:3' | '1:1'.
   String? aspect;
 
+  // Weather card (HA weather-forecast card options).
+  bool showCurrent;
+  bool showForecast;
+  String forecastType; // 'daily' | 'hourly' | 'twice_daily'
+  bool roundTemp;
+
+  // Calendar card (HA calendar card options).
+  String initialView; // 'month' | 'day' | 'list'
+
   CardSpec({
     required this.id,
     required this.kind,
@@ -1879,6 +1926,11 @@ class CardSpec {
     this.tap = 'more-info',
     this.fit = 'cover',
     this.aspect,
+    this.showCurrent = true,
+    this.showForecast = true,
+    this.forecastType = 'daily',
+    this.roundTemp = false,
+    this.initialView = 'month',
   });
 
   Map<String, dynamic> toJson() => {
@@ -1899,6 +1951,11 @@ class CardSpec {
         'tap': tap,
         'fit': fit,
         'aspect': aspect,
+        'showCurrent': showCurrent,
+        'showForecast': showForecast,
+        'forecastType': forecastType,
+        'roundTemp': roundTemp,
+        'initialView': initialView,
       };
   factory CardSpec.fromJson(Map<String, dynamic> j) => CardSpec(
         id: j['id'] as String,
@@ -1920,6 +1977,11 @@ class CardSpec {
         tap: j['tap'] as String? ?? 'more-info',
         fit: j['fit'] as String? ?? 'cover',
         aspect: j['aspect'] as String?,
+        showCurrent: j['showCurrent'] as bool? ?? true,
+        showForecast: j['showForecast'] as bool? ?? true,
+        forecastType: j['forecastType'] as String? ?? 'daily',
+        roundTemp: j['roundTemp'] as bool? ?? false,
+        initialView: j['initialView'] as String? ?? 'month',
       );
 }
 
@@ -2315,11 +2377,11 @@ class _ToggleButtonState extends State<_ToggleButton> {
 Widget _cardWidget(CardSpec card) {
   switch (card.kind) {
     case CardKind.weather:
-      return const _WeatherStrip();
+      return _WeatherStrip(spec: card);
     case CardKind.camera:
       return CameraCard(spec: card);
     case CardKind.calendar:
-      return const CalendarCard();
+      return CalendarCard(spec: card);
     case CardKind.haStatus:
       return const RoomCard();
     case CardKind.entity:
@@ -2417,14 +2479,19 @@ class _EntityCard extends StatelessWidget {
 }
 
 class _WeatherStrip extends StatelessWidget {
-  const _WeatherStrip();
+  final CardSpec? spec;
+  const _WeatherStrip({this.spec});
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
     final w = WeatherScope.of(context).data;
+    final showCurrent = spec?.showCurrent ?? true;
+    final temp = (w != null && (spec?.roundTemp ?? false))
+        ? '${w.tempF}'
+        : '${w?.tempF}';
     final condTemp =
-        w == null ? 'Loading…' : '${w.condition}  ·  ${w.tempF} °F';
+        w == null ? 'Loading…' : '${w.condition}  ·  $temp °F';
     return LiquidGlass(
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 16 * s),
@@ -2441,12 +2508,19 @@ class _WeatherStrip extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (spec?.name != null)
+                      Text(spec!.name!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 13 * s,
+                              color: const Color(0x99FFFFFF))),
                     Text(_hourMinuteAmPm(now),
                         style: TextStyle(
                             fontSize: 24 * s,
                             fontWeight: FontWeight.w700,
                             color: Colors.white)),
-                    Text('$date  ·  $condTemp',
+                    Text(showCurrent ? '$date  ·  $condTemp' : date,
                         style: TextStyle(
                             fontSize: 14 * s, color: const Color(0xB3FFFFFF))),
                   ],
@@ -2636,18 +2710,41 @@ class _CameraCardState extends State<CameraCard> {
 }
 
 class CalendarCard extends StatelessWidget {
-  const CalendarCard({super.key});
+  final CardSpec? spec;
+  const CalendarCard({super.key, this.spec});
 
   @override
   Widget build(BuildContext context) {
     final s = _scale(context);
     final now = DateTime.now();
+    // initial_view drives how many upcoming days to list (placeholder until the
+    // real HA/CalDAV-backed calendar lands): day=1, month=4, list=7.
+    final days = switch (spec?.initialView) {
+      'day' => 1,
+      'list' => 7,
+      _ => 4,
+    };
     return LiquidGlass(
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 22 * s, vertical: 8 * s),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: List.generate(4, (i) {
+          children: [
+            if (spec?.name != null)
+              Padding(
+                padding: EdgeInsets.only(top: 8 * s, bottom: 2 * s),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(spec!.name!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 16 * s,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                ),
+              ),
+            ...List.generate(days, (i) {
             final d = now.add(Duration(days: i));
             return Row(
               children: [
@@ -2692,6 +2789,7 @@ class CalendarCard extends StatelessWidget {
               ],
             );
           }),
+          ],
         ),
       ),
     );

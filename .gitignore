@@ -5,3 +5,6 @@ models/*.tflite
 # Local tooling / generated — never commit
 graphify-out/
 .claude/
+
+# Local HA documentation reference (not part of this project)
+Home Assistant Docs/

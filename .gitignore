@@ -11,3 +11,8 @@ Home Assistant Docs/
 
 # Local-only session onboarding brief (reference, not shipped)
 START_HERE.md
+
+# Keep only README.md files in git; all other markdown stays local.
+*.md
+!README.md
+!**/README.md

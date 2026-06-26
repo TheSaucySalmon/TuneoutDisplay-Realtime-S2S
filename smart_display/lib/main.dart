@@ -692,6 +692,41 @@ class ConfigScope extends InheritedNotifier<AppConfig> {
       context.dependOnInheritedWidgetOfExactType<ConfigScope>()!.notifier!;
 }
 
+/// The bottom-center "handle" rect a swipe-up-to-edit must BEGIN inside. Small
+/// and centered so ordinary taps near the bottom never arm edit mode.
+@visibleForTesting
+Rect editHandleRect(Size size) {
+  const handleHeight = 64.0;
+  final handleWidth = size.width * 0.30;
+  return Rect.fromLTWH(
+      (size.width - handleWidth) / 2, size.height - handleHeight,
+      handleWidth, handleHeight);
+}
+
+/// True once a press that began in [editHandleRect] has been dragged clearly
+/// UPWARD (mostly-vertical) from [start] to [current] by at least [upThreshold]
+/// px — the "swipe up" that arms the hold timer.
+@visibleForTesting
+bool editSwipeArmed(Offset start, Offset current, {double upThreshold = 48}) {
+  final up = start.dy - current.dy; // positive = moved up
+  final dx = (current.dx - start.dx).abs();
+  return up >= upThreshold && dx < up; // upward and not a sideways drag
+}
+
+/// Faint home-bar pill hinting where to swipe up to enter edit mode.
+class _EditHandleHint extends StatelessWidget {
+  const _EditHandleHint();
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 120,
+        height: 5,
+        decoration: BoxDecoration(
+          color: const Color(0x33FFFFFF),
+          borderRadius: BorderRadius.circular(3),
+        ),
+      );
+}
+
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
 
@@ -716,6 +751,10 @@ class _RootShellState extends State<RootShell> {
   bool _showTheme = false; // theme panel (gear) open over edit mode
   double _holdProgress = 0; // swipe-up-and-hold-to-edit progress (0..1)
   Timer? _holdTimer;
+  // Edit-entry gesture: a press that began inside the bottom-center handle, and
+  // whether it has since been swiped clearly upward (which arms the hold).
+  Offset? _editGestureStart;
+  bool _editArmed = false;
 
   @override
   void initState() {
@@ -754,18 +793,41 @@ class _RootShellState extends State<RootShell> {
     });
   }
 
-  // Touch the bottom of the screen and hold ~2s (a swipe-up-and-hold) to enter
-  // edit mode; a radial progress ring fills, releasing early cancels.
+  // Edit mode is entered with a deliberate swipe-up-and-hold from a small handle
+  // at the bottom-center of the screen: press inside the handle, slide clearly
+  // upward to arm, then hold ~2s while the radial ring fills. A plain press, a
+  // sideways drag, or releasing early all cancel.
   void _onPointerDown(PointerDownEvent e) {
     _onActivity(e);
     if (_editing || _idle) return;
-    if (e.position.dy < MediaQuery.sizeOf(context).height * 0.7) return;
+    if (editHandleRect(MediaQuery.sizeOf(context)).contains(e.position)) {
+      _editGestureStart = e.position; // start tracking; arming happens on move
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    _onActivity(e);
+    final start = _editGestureStart;
+    if (start == null || _editing || _idle) return;
+    if (!_editArmed) {
+      if (editSwipeArmed(start, e.position)) {
+        _editArmed = true;
+        _startEditHold();
+      }
+    } else if (e.position.dy > start.dy) {
+      _cancelHold(); // reversed back down past the origin
+    }
+  }
+
+  void _startEditHold() {
     _holdTimer?.cancel();
     _holdTimer = Timer.periodic(const Duration(milliseconds: 40), (t) {
       setState(() => _holdProgress += 40 / 2000);
       if (_holdProgress >= 1) {
         t.cancel();
         setState(() => _holdProgress = 0);
+        _editGestureStart = null;
+        _editArmed = false;
         _openEdit();
       }
     });
@@ -773,6 +835,8 @@ class _RootShellState extends State<RootShell> {
 
   void _cancelHold([_]) {
     _holdTimer?.cancel();
+    _editGestureStart = null;
+    _editArmed = false;
     if (_holdProgress != 0) setState(() => _holdProgress = 0);
   }
 
@@ -815,7 +879,7 @@ class _RootShellState extends State<RootShell> {
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: _onPointerDown,
-        onPointerMove: _onActivity,
+        onPointerMove: _onPointerMove,
         onPointerUp: _cancelHold,
         onPointerCancel: _cancelHold,
         child: MouseRegion(
@@ -867,6 +931,18 @@ class _RootShellState extends State<RootShell> {
                 child: EditPanel(
                     onClose: () => setState(() => _showTheme = false)),
               ),
+              // Subtle home-bar handle hinting where to swipe up to edit.
+              if (!_idle && !_editing && _holdProgress == 0)
+                const Positioned(
+                  bottom: 8,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: _EditHandleHint(),
+                    ),
+                  ),
+                ),
               if (_holdProgress > 0)
                 Positioned(
                   bottom: 60,
@@ -2078,14 +2154,208 @@ const _month = [
 ];
 
 /// Swipe-first dashboard: no nav bar, just horizontally swipeable pages with a
-/// small page indicator. Page 0 is the Overview; the rest are placeholders for
-/// now (floors/energy/printer).
-class DashboardScreen extends StatelessWidget {
+/// small page indicator. In edit mode a trailing "add page" panel lets you grow
+/// the dashboard by holding past the last page.
+class DashboardScreen extends StatefulWidget {
   final bool editing;
   const DashboardScreen({super.key, this.editing = false});
 
   @override
-  Widget build(BuildContext context) => GridDashboard(editing: editing);
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  final PageController _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final layout = LayoutScope.of(context);
+    final realPages = layout.pageCount;
+    // Edit mode shows one extra "add page" page at the end.
+    final count = widget.editing ? realPages + 1 : realPages;
+
+    // A deleted page (or leaving edit mode on the add-page panel) can leave the
+    // controller past the end — clamp back after this frame.
+    if (_page >= count) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_controller.hasClients) return;
+        _controller.jumpToPage(count - 1);
+        setState(() => _page = count - 1);
+      });
+    }
+
+    return Stack(
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: count,
+          onPageChanged: (p) {
+            setState(() => _page = p);
+            if (p < layout.pageCount) layout.activePage = p;
+          },
+          itemBuilder: (ctx, i) {
+            if (widget.editing && i == realPages) {
+              return _AddPagePanel(onAdd: () {
+                final idx = layout.addPage();
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted || !_controller.hasClients) return;
+                  _controller.animateToPage(idx,
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOut);
+                });
+              });
+            }
+            return GridDashboard(editing: widget.editing, page: i);
+          },
+        ),
+        if (realPages > 1 || widget.editing)
+          Positioned(
+            bottom: 26,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: _PageDots(
+                count: realPages,
+                current: _page.clamp(0, realPages - 1),
+                onAddPage: widget.editing && _page == realPages,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Bottom page-indicator dots; shows a faint "+" when sitting on the add-page
+/// panel in edit mode.
+class _PageDots extends StatelessWidget {
+  final int count;
+  final int current;
+  final bool onAddPage;
+  const _PageDots(
+      {required this.count, required this.current, this.onAddPage = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ConfigScope.of(context).accent;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (var i = 0; i < count; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Container(
+              width: i == current && !onAddPage ? 9 : 7,
+              height: i == current && !onAddPage ? 9 : 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: i == current && !onAddPage
+                    ? accent
+                    : const Color(0x55FFFFFF),
+              ),
+            ),
+          ),
+        if (onAddPage)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Icon(Icons.add_circle_outline, size: 16, color: accent),
+          ),
+      ],
+    );
+  }
+}
+
+/// Trailing "add page" panel: swipe to it in edit mode, then hold to confirm.
+class _AddPagePanel extends StatefulWidget {
+  final VoidCallback onAdd;
+  const _AddPagePanel({required this.onAdd});
+  @override
+  State<_AddPagePanel> createState() => _AddPagePanelState();
+}
+
+class _AddPagePanelState extends State<_AddPagePanel> {
+  Timer? _timer;
+  double _progress = 0;
+
+  void _start() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(milliseconds: 40), (t) {
+      setState(() => _progress += 40 / 1500); // ~1.5s hold
+      if (_progress >= 1) {
+        t.cancel();
+        setState(() => _progress = 0);
+        widget.onAdd();
+      }
+    });
+  }
+
+  void _cancel([_]) {
+    _timer?.cancel();
+    if (_progress != 0) setState(() => _progress = 0);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ConfigScope.of(context).accent;
+    return Center(
+      child: GestureDetector(
+        onTapDown: (_) => _start(),
+        onTapUp: _cancel,
+        onTapCancel: _cancel,
+        child: Container(
+          width: 220,
+          height: 220,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: const Color(0x14FFFFFF),
+            border: Border.all(color: const Color(0x40FFFFFF), width: 2),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 66,
+                height: 66,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (_progress > 0)
+                      SizedBox(
+                        width: 66,
+                        height: 66,
+                        child: CircularProgressIndicator(
+                          value: _progress,
+                          strokeWidth: 4,
+                          color: accent,
+                          backgroundColor: const Color(0x22FFFFFF),
+                        ),
+                      ),
+                    const Icon(Icons.add_rounded, color: Colors.white, size: 42),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text('Hold to add page',
+                  style: TextStyle(color: Color(0xB3FFFFFF))),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ── Editable grid layout ─────────────────────────────────────────────────────
@@ -2101,6 +2371,7 @@ class CardSpec {
   final CardKind kind;
   String? entityId;
   int col, row, w, h;
+  int page; // which dashboard page (0-based) this card lives on
 
   /// Per-card style override; null = inherit the global AppConfig.cardStyle.
   CardStyle? style;
@@ -2140,6 +2411,7 @@ class CardSpec {
     required this.row,
     required this.w,
     required this.h,
+    this.page = 0,
     this.style,
     this.color,
     this.name,
@@ -2165,6 +2437,7 @@ class CardSpec {
         'row': row,
         'w': w,
         'h': h,
+        'page': page,
         'style': style?.index,
         'color': color,
         'name': name,
@@ -2189,6 +2462,7 @@ class CardSpec {
         row: (j['row'] as num).toInt(),
         w: (j['w'] as num).toInt(),
         h: (j['h'] as num).toInt(),
+        page: (j['page'] as num?)?.toInt() ?? 0,
         style: j['style'] == null
             ? null
             : CardStyle.values[(j['style'] as num).toInt()],
@@ -2239,19 +2513,60 @@ List<CardSpec> _defaultLayout() => [
 
 class AppLayout extends ChangeNotifier {
   List<CardSpec> cards;
-  AppLayout(this.cards);
+  int pageCount;
+
+  /// The page currently on screen. Transient view state (not persisted): set by
+  /// the dashboard as you swipe. New cards are added here; "delete page" targets
+  /// it.
+  int activePage = 0;
+
+  /// Disabled in tests so mutations don't write to ~/.config.
+  @visibleForTesting
+  bool persist = true;
+
+  AppLayout(this.cards, {int? pageCount})
+      : pageCount = pageCount ?? _derivePageCount(cards);
+
+  static int _derivePageCount(List<CardSpec> cards) {
+    var maxPage = 0;
+    for (final c in cards) {
+      if (c.page > maxPage) maxPage = c.page;
+    }
+    return maxPage + 1;
+  }
 
   static File get _file =>
       File('${Platform.environment['HOME']}/.config/smart-display/layout.json');
+
+  /// Parses persisted layout, tolerating both the current object form
+  /// (`{pageCount, cards}`) and the legacy bare-array form (all cards on page 0).
+  @visibleForTesting
+  static AppLayout fromDecoded(Object? decoded) {
+    if (decoded is Map) {
+      final raw = decoded['cards'];
+      if (raw is List) {
+        final cards =
+            raw.map((e) => CardSpec.fromJson(e as Map<String, dynamic>)).toList();
+        if (cards.isNotEmpty) {
+          final pc = (decoded['pageCount'] as num?)?.toInt();
+          return AppLayout(cards,
+              pageCount: pc == null ? null : (pc < 1 ? 1 : pc));
+        }
+      }
+    } else if (decoded is List) {
+      final cards = decoded
+          .map((e) => CardSpec.fromJson(e as Map<String, dynamic>))
+          .toList();
+      if (cards.isNotEmpty) return AppLayout(cards);
+    }
+    return AppLayout(_defaultLayout());
+  }
 
   static Future<AppLayout> load() async {
     try {
       final f = _file;
       if (f.existsSync()) {
-        final j = jsonDecode(await f.readAsString()) as List;
-        final cards =
-            j.map((e) => CardSpec.fromJson(e as Map<String, dynamic>)).toList();
-        if (cards.isNotEmpty) return AppLayout(cards);
+        return fromDecoded(jsonDecode(await f.readAsString()));
       }
     } catch (_) {}
     return AppLayout(_defaultLayout());
@@ -2261,14 +2576,17 @@ class AppLayout extends ChangeNotifier {
     try {
       final f = _file;
       await f.parent.create(recursive: true);
-      await f.writeAsString(jsonEncode(cards.map((c) => c.toJson()).toList()));
+      await f.writeAsString(jsonEncode({
+        'pageCount': pageCount,
+        'cards': cards.map((c) => c.toJson()).toList(),
+      }));
     } catch (_) {}
   }
 
   void update(VoidCallback fn) {
     fn();
     notifyListeners();
-    save();
+    if (persist) save();
   }
 
   void addEntity(String entityId) => update(() => cards.add(CardSpec(
@@ -2279,9 +2597,31 @@ class AppLayout extends ChangeNotifier {
         row: 0,
         w: 1,
         h: 1,
+        page: activePage,
       )));
 
   void remove(String id) => update(() => cards.removeWhere((c) => c.id == id));
+
+  /// Append a new blank page; returns its index.
+  int addPage() {
+    final newIndex = pageCount;
+    update(() => pageCount++);
+    return newIndex;
+  }
+
+  /// Delete [page] and its cards, shifting later pages down. The last remaining
+  /// page can't be deleted.
+  void removePage(int page) {
+    if (pageCount <= 1 || page < 0 || page >= pageCount) return;
+    update(() {
+      cards.removeWhere((c) => c.page == page);
+      for (final c in cards) {
+        if (c.page > page) c.page--;
+      }
+      pageCount--;
+      if (activePage >= pageCount) activePage = pageCount - 1;
+    });
+  }
 }
 
 class LayoutScope extends InheritedNotifier<AppLayout> {
@@ -2297,7 +2637,8 @@ class LayoutScope extends InheritedNotifier<AppLayout> {
 /// grid snapping.
 class GridDashboard extends StatefulWidget {
   final bool editing;
-  const GridDashboard({super.key, this.editing = false});
+  final int page;
+  const GridDashboard({super.key, this.editing = false, this.page = 0});
 
   @override
   State<GridDashboard> createState() => _GridDashboardState();
@@ -2326,7 +2667,7 @@ class _GridDashboardState extends State<GridDashboard> {
           final stepY = cellH + gap;
           return Stack(
             children: [
-              for (final card in layout.cards)
+              for (final card in layout.cards.where((c) => c.page == widget.page))
                 _positioned(card, cellW, cellH, gap, stepX, stepY, layout),
             ],
           );
@@ -4024,6 +4365,7 @@ class EditPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cfg = ConfigScope.of(context);
+    final layout = LayoutScope.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 26),
       constraints: const BoxConstraints(maxHeight: 460),
@@ -4101,6 +4443,30 @@ class EditPanel extends StatelessWidget {
             _SwatchRow(
                 selected: cfg.cardColor,
                 onSelect: (c) => cfg.update(() => cfg.cardColor = c)),
+            _label('Pages'),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                      'Page ${layout.activePage + 1} of ${layout.pageCount}',
+                      style: const TextStyle(color: Color(0xB3FFFFFF))),
+                ),
+                TextButton.icon(
+                  // Can't delete the last remaining page.
+                  onPressed: layout.pageCount > 1
+                      ? () {
+                          layout.removePage(layout.activePage);
+                          onClose();
+                        }
+                      : null,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Delete page'),
+                  style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFFE0697A),
+                      disabledForegroundColor: const Color(0x33FFFFFF)),
+                ),
+              ],
+            ),
           ],
         ),
       ),

@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart'
     show consolidateHttpClientResponseBytes, visibleForTesting;
+import 'package:flutter/gestures.dart'
+    show LongPressGestureRecognizer, TapGestureRecognizer;
 import 'package:flutter/material.dart';
 
 // Dev-only on-host test harness (demo entity seed + auto-open more-info). Every
@@ -1646,6 +1648,8 @@ class _CardEditorState extends State<_CardEditor> {
               (v) => _set(() => card.showIcon = v)),
           _toggle('Vertical layout', card.vertical,
               (v) => _set(() => card.vertical = v)),
+          _toggle('Slider % readout', card.sliderReadout,
+              (v) => _set(() => card.sliderReadout = v)),
         ],
         if (card.kind == CardKind.camera) ...[
           const SizedBox(height: 8),
@@ -2387,6 +2391,7 @@ class CardSpec {
   bool showState; // HA hide_state (inverted)
   bool showIcon;
   bool vertical; // HA `vertical` — icon above text
+  bool sliderReadout; // show the % value while press-hold dragging to adjust
   /// Normal-mode tap action: 'more-info' | 'toggle' | 'none' (HA tap_action).
   String tap;
   /// Camera fit: 'cover' | 'contain' | 'fill' (HA fit_mode).
@@ -2419,6 +2424,7 @@ class CardSpec {
     this.showState = true,
     this.showIcon = true,
     this.vertical = false,
+    this.sliderReadout = true,
     this.tap = 'more-info',
     this.fit = 'cover',
     this.aspect,
@@ -2445,6 +2451,7 @@ class CardSpec {
         'showState': showState,
         'showIcon': showIcon,
         'vertical': vertical,
+        'sliderReadout': sliderReadout,
         'tap': tap,
         'fit': fit,
         'aspect': aspect,
@@ -2472,6 +2479,7 @@ class CardSpec {
         showState: j['showState'] as bool? ?? true,
         showIcon: j['showIcon'] as bool? ?? true,
         vertical: j['vertical'] as bool? ?? false,
+        sliderReadout: j['sliderReadout'] as bool? ?? true,
         tap: j['tap'] as String? ?? 'more-info',
         fit: j['fit'] as String? ?? 'cover',
         aspect: j['aspect'] as String?,
@@ -2774,24 +2782,238 @@ class _GridDashboardState extends State<GridDashboard> {
       );
     }
 
-    // Normal mode: apply the card's tap_action (more-info / toggle / none).
-    if (!widget.editing && card.entityId != null && card.tap != 'none') {
+    // Normal mode: tap runs the card's tap_action (more-info / toggle / none);
+    // press-hold + horizontal drag adjusts an adjustable entity in place.
+    if (!widget.editing && card.entityId != null) {
       final id = card.entityId!;
-      child = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          if (card.tap == 'toggle') {
-            HaScope.of(context).callService(id.split('.').first, 'toggle', id);
-          } else {
-            _showMoreInfo(context, id);
-          }
-        },
+      child = _AdjustableCard(
+        card: card,
+        onTap: card.tap == 'none'
+            ? null
+            : () {
+                if (card.tap == 'toggle') {
+                  HaScope.of(context)
+                      .callService(id.split('.').first, 'toggle', id);
+                } else {
+                  _showMoreInfo(context, id);
+                }
+              },
         child: child,
       );
     }
 
     return Positioned(left: left, top: top, width: w, height: h, child: child);
   }
+}
+
+/// How a dashboard card's press-hold horizontal drag maps to a live service
+/// call. [value] is the entity's current primary value as a 0..100 percent.
+class CardAdjust {
+  final double value;
+  final String service;
+  final Map<String, dynamic> Function(int pct) data;
+  const CardAdjust(
+      {required this.value, required this.service, required this.data});
+}
+
+/// Returns the drag-to-adjust descriptor for [domain]/[attrs], or null if the
+/// entity has no adjustable primary value (light brightness, media volume,
+/// cover position, fan speed). Pure — unit-tested.
+@visibleForTesting
+CardAdjust? cardAdjustment(String domain, Map attrs) {
+  switch (domain) {
+    case 'light':
+      final modes =
+          (attrs['supported_color_modes'] as List?)?.cast<String>() ?? const [];
+      // On/off-only lights aren't dimmable.
+      if (modes.length == 1 && modes.first == 'onoff') return null;
+      final b = (attrs['brightness'] as num?)?.toDouble();
+      return CardAdjust(
+          value: b == null ? 0 : b / 255 * 100,
+          service: 'turn_on',
+          data: (p) => {'brightness_pct': p});
+    case 'media_player':
+      final v = (attrs['volume_level'] as num?)?.toDouble();
+      if (v == null) return null;
+      return CardAdjust(
+          value: v * 100,
+          service: 'volume_set',
+          data: (p) => {'volume_level': p / 100});
+    case 'cover':
+      final pos = (attrs['current_position'] as num?)?.toDouble();
+      if (pos == null) return null;
+      return CardAdjust(
+          value: pos,
+          service: 'set_cover_position',
+          data: (p) => {'position': p});
+    case 'fan':
+      final pct = (attrs['percentage'] as num?)?.toDouble();
+      if (pct == null) return null;
+      return CardAdjust(
+          value: pct, service: 'set_percentage', data: (p) => {'percentage': p});
+  }
+  return null;
+}
+
+/// The in-card slider fill color: a light's live color (rgb, else hs), otherwise
+/// the theme accent. Pure — unit-tested.
+@visibleForTesting
+Color sliderFillColor(String domain, Map attrs, Color accent) {
+  if (domain == 'light') {
+    final rgb = (attrs['rgb_color'] as List?)?.cast<num>();
+    if (rgb != null && rgb.length >= 3) {
+      return Color.fromARGB(255, rgb[0].toInt(), rgb[1].toInt(), rgb[2].toInt());
+    }
+    final hs = (attrs['hs_color'] as List?)?.cast<num>();
+    if (hs != null && hs.length >= 2) {
+      return HSVColor.fromAHSV(1, (hs[0] % 360).toDouble(),
+              (hs[1] / 100).clamp(0, 1).toDouble(), 1)
+          .toColor();
+    }
+  }
+  return accent;
+}
+
+/// Wraps an entity card so that, in normal mode, a press-hold-then-horizontal
+/// drag adjusts the entity's primary value live (no menu). A quick tap still runs
+/// [onTap] (toggle / more-info); a plain swipe still pages. Non-adjustable
+/// entities just get the tap behavior.
+class _AdjustableCard extends StatefulWidget {
+  final CardSpec card;
+  final Widget child;
+  final VoidCallback? onTap;
+  const _AdjustableCard({required this.card, required this.child, this.onTap});
+  @override
+  State<_AdjustableCard> createState() => _AdjustableCardState();
+}
+
+class _AdjustableCardState extends State<_AdjustableCard> {
+  double? _dragPct; // non-null while dragging
+  double _startPct = 0;
+  double _width = 1;
+  DateTime _lastSent = DateTime.fromMillisecondsSinceEpoch(0);
+
+  String get _id => widget.card.entityId!;
+  String get _domain => entityDomain(_id);
+  Map get _attrs =>
+      (EntityScope.of(context).state(_id)?['attributes'] as Map?) ?? const {};
+
+  void _commit(CardAdjust adj, int pct, {bool force = false}) {
+    final now = DateTime.now();
+    // Throttle live updates (~180ms); always send the final value on release.
+    if (!force && now.difference(_lastSent).inMilliseconds < 180) return;
+    _lastSent = now;
+    HaScope.of(context).callService(_domain, adj.service, _id, adj.data(pct));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final adj = cardAdjustment(_domain, _attrs);
+    if (adj == null) {
+      if (widget.onTap == null) return widget.child;
+      return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: widget.child);
+    }
+    final accent = ConfigScope.of(context).accent;
+    final fill = sliderFillColor(_domain, _attrs, accent);
+    final pct = (_dragPct ?? adj.value).clamp(0, 100).toDouble();
+    return LayoutBuilder(builder: (ctx, c) {
+      _width = c.maxWidth <= 0 ? 1 : c.maxWidth;
+      return RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: <Type, GestureRecognizerFactory>{
+          if (widget.onTap != null)
+            TapGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+              () => TapGestureRecognizer(),
+              (r) => r.onTap = widget.onTap,
+            ),
+          // 300ms hold "arms" the slide so it wins over the PageView's horizontal
+          // drag; a quick swipe still pages.
+          LongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+            () => LongPressGestureRecognizer(
+                duration: const Duration(milliseconds: 300)),
+            (r) {
+              r.onLongPressStart = (_) =>
+                  setState(() => _dragPct = _startPct = adj.value);
+              r.onLongPressMoveUpdate = (d) {
+                final np =
+                    (_startPct + d.localOffsetFromOrigin.dx / _width * 100)
+                        .clamp(0, 100)
+                        .toDouble();
+                setState(() => _dragPct = np);
+                _commit(adj, np.round());
+              };
+              r.onLongPressEnd = (_) {
+                _commit(adj, (_dragPct ?? adj.value).round(), force: true);
+                setState(() => _dragPct = null);
+              };
+            },
+          ),
+        },
+        child: Stack(
+          children: [
+            widget.child,
+            if (_dragPct != null)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: _SliderFill(
+                    pct: pct,
+                    color: fill,
+                    showValue: widget.card.sliderReadout,
+                    radius: ConfigScope.of(context).cornerRadius,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+/// The translucent left-to-right fill drawn over a card while adjusting it.
+class _SliderFill extends StatelessWidget {
+  final double pct;
+  final Color color;
+  final bool showValue;
+  final double radius;
+  const _SliderFill(
+      {required this.pct,
+      required this.color,
+      required this.showValue,
+      required this.radius});
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Stack(
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: (pct / 100).clamp(0.0, 1.0),
+                heightFactor: 1,
+                child: ColoredBox(color: color.withValues(alpha: 0.35)),
+              ),
+            ),
+            if (showValue)
+              Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text('${pct.round()}%',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16)),
+                ),
+              ),
+          ],
+        ),
+      );
 }
 
 /// HA-style "more info" sheet: live state, attributes, and a toggle.

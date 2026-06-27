@@ -15,6 +15,10 @@ import 'package:flutter/material.dart';
 // this is fully inert in production. See dev_harness.dart.
 part 'dev_harness.dart';
 
+/// Display name of the app. Placeholder/working title — change this one constant
+/// to rebrand the window title everywhere.
+const String kAppName = 'Smart Display';
+
 /// Loaded once at startup; null if the GPU/back-end can't compile it, in which
 /// case [LiquidGlass] falls back to a plain frosted panel.
 ui.FragmentProgram? glassProgram;
@@ -44,7 +48,7 @@ class SmartDisplayApp extends StatelessWidget {
       child: LayoutScope(
         layout: appLayout,
         child: MaterialApp(
-          title: 'Tuneout Display',
+          title: kAppName,
           debugShowCheckedModeBanner: false,
           theme: ThemeData(brightness: Brightness.dark, fontFamily: 'SF Pro'),
           home: const RootShell(),

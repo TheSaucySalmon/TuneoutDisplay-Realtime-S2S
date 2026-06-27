@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# TuneoutDisplay Configuration Script
+# Smart Display — Configuration Script  (placeholder name; see kAppName)
 # Tested on: Raspberry Pi OS 64-bit (Trixie), kernel 6.12.x
 # Hardware:  Raspberry Pi 5 + generic audio by default
 #
@@ -74,7 +74,7 @@ if [ ${#_MISSING_FILES[@]} -gt 0 ]; then
     echo "  These files must be in the same directory as configure.sh."
     echo "  If you cloned the repo, make sure you have the latest version:"
     echo ""
-    echo "    cd ~/TuneoutDisplay && git pull"
+    echo "    cd \"$SCRIPT_DIR\" && git pull"
     echo ""
     echo "  The script will continue but the corresponding services will be"
     echo "  skipped.  Run configure.sh again after pulling to set them up."
@@ -1093,7 +1093,7 @@ chmod 600 "$CURRENT_HOME/.config/smart-display/ha.json"
 
 if [ ! -d "$FLUTTER_APP_SRC" ]; then
     warn "smart_display/ not found next to configure.sh — skipping Flutter shell."
-    warn "Pull the latest repo (cd ~/TuneoutDisplay && git pull) and re-run."
+    warn "Pull the latest repo (cd \"$SCRIPT_DIR\" && git pull) and re-run."
 else
     info "Installing Flutter build dependencies..."
     sudo apt install -y clang cmake ninja-build pkg-config libgtk-3-dev curl unzip
@@ -1288,7 +1288,7 @@ aplay -D seeed_tts /usr/share/sounds/alsa/Front_Left.wav
 dkms status seeed-voicecard
 
 # Re-run configure script (idempotent — safe to run again to change settings)
-cd ~/TuneoutDisplay && ./configure.sh
+cd ~/smart-display && ./configure.sh
 ```
 READMEEOF
 

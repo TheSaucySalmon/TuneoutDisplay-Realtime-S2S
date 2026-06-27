@@ -1,18 +1,27 @@
-# TuneoutDisplay
+# Smart Display
+
+> **Working title.** "Smart Display" is a placeholder name (set in
+> `smart_display/lib/main.dart` as `kAppName`) until a public release.
+
+A Raspberry Pi 5 wall/desk **smart display** for Home Assistant: a native Flutter
+dashboard with an iOS-style "liquid glass" aesthetic that boots fullscreen under
+labwc, alongside an on-device voice-assistant / audio / MQTT stack. The Flutter
+dashboard is the current focus; the voice/audio/MQTT layer is inherited and being
+rebuilt for this project's own direction.
 
 ## Credits
 
-This project is based on [TuneoutDisplay](https://github.com/zmsaunders/TuneoutDisplay) by [zmsaunders](https://github.com/zmsaunders).
-
-My version keeps the Raspberry Pi smart display / Home Assistant integration concept, but replaces the original voice assistant approach with OpenAI GPT-Realtime speech-to-speech. The original script I made was just an injector script for chromium, which kinda sucked. Also, my hardware setup looked like a cursed image, which sucked as well. Surprisingly, I came across zmsaunders post on the Home Assistant subreddit, and his work solved everything except for the gpt-realtime speech-to-speech issue. 
-
-I don't intend for anyone to see this project anyways, I'm just an idiot that doesn't know how to use GitHub and decided to click some buttons, and now I'm here. Could I have made a private copy of this repo for myself? Probably. Do I know how? Nope. I already did pushes/pulls with this repo, so there's no going back (I'm lazy). If anyone is reading this, I'm sorry lmao.
-
-Also, I'm not an OpenAI glazer, I would totally use Claude for coding, but I'm too lazy. Also, Codex is already in my IDE, so I don't feel like changing it. If Antropic releases a better competitor to Realtime, this project will become pointless.
+Derived from [TuneoutDisplay](https://github.com/zmsaunders/TuneoutDisplay) by
+[zmsaunders](https://github.com/zmsaunders) — this started from that project's
+Raspberry Pi smart-display / Home Assistant concept. The UI has since been
+rebuilt as a native Flutter app, and the voice path uses OpenAI GPT-Realtime
+speech-to-speech. See the [License](#license) section regarding attribution.
 
 ## Full Disclosure
 
-Just like the original author, I only work on this project in my spare time. I'm also not the world greatest programmer, so I used Codex to help with the recreation of this project. I'm pretty new to Raspberry Pi's, so I'm still learning everything about them. I also am very new to Linux, since I was raised using Windows. I apologize if anything in here is worded incorrectly.
+A personal, spare-time project — not a polished product. Parts were built with the
+help of AI coding assistants, and the author is still new to Raspberry Pi and
+Linux, so expect rough edges and occasional imprecise wording.
 
 ---
 
@@ -25,7 +34,7 @@ Just like the original author, I only work on this project in my spare time. I'm
 | Display | Raspberry Pi Official 7" DSI Touchscreen |
 | Speaker | 3W 8 ohm (Recommended, USB device works fine too.) |
 | OS | Raspberry Pi OS 64-bit (Trixie / Debian 13), kernel 6.12.x |
-| Compositor | Not a clue |
+| Compositor | labwc (Wayland / wlroots) |
 | Cooling | **Active cooling required** (see below) |
 
 > [!IMPORTANT]
@@ -53,7 +62,7 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 
 ## Features
 
-- **Native display shell** - Flutter app (`smart_display/`) that boots fullscreen under labwc: liquid-glass dashboard, static idle screensaver, live HA entities, weather, and camera snapshots. No browser.
+- **Native display shell** - Flutter app (`smart_display/`) that boots fullscreen under labwc: liquid-glass dashboard, static idle screensaver, live HA entities, weather, and camera snapshots. No browser. In-app edit mode with multi-page layouts, per-card config, and per-domain entity controls.
 - **OpenAI Realtime first-pass integration** - Assistant runtime can open a Realtime session, stream mic audio, and play returned model audio
 - **Wake-word runtime path** - OpenWakeWord is wired in as the wake gate for the assistant runtime
 - **Home Assistant voice control path** - Realtime can call HA services for entities, scenes, scripts, and helpers
@@ -66,6 +75,9 @@ On `generic_usb`, voice and speaker volume currently point at the same underlyin
 - **Generic USB audio controls** - USB speaker and mic volume controls can be exposed in HA via MQTT
 - **Realtime debug entities** - Realtime status, transcript, and last response can be surfaced in HA for testing
 
+> The voice-assistant / audio / MQTT stack is inherited from the upstream project
+> and slated to be rebuilt. The native Flutter dashboard is the active work.
+
 ---
 
 ## Repo Structure
@@ -75,8 +87,6 @@ configure.sh                    # Main setup / install script for the Pi
 mqtt-bridge.py                  # MQTT discovery + HA control entities
 touch-scroll.py                 # Touch swipe -> scroll daemon
 README.md                       # Main project documentation
-ha-configuration.md             # Home Assistant setup notes
-OPENAI-REALTIME.md              # Realtime implementation notes
 LICENSE.txt                     # License
 
 assistant/
@@ -91,8 +101,10 @@ assistant/
   __init__.py
 
 smart_display/
-  lib/main.dart                 # Native Flutter display shell
+  lib/main.dart                 # Native Flutter display shell (main source)
+  lib/dev_harness.dart          # Dev-only test harness (part of main.dart)
   shaders/liquid_glass.frag     # Liquid-glass refraction shader
+  test/                         # Headless widget/unit tests
 
 stl-files/
   body.stl                      # Main printed enclosure body
@@ -121,8 +133,8 @@ Note: the STL files are still in flux. The frame / grill fitment is being revise
 Clone this repo onto the Pi and run the setup script as your normal user (not root):
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/TuneoutDisplay.git
-cd TuneoutDisplay
+git clone <your-repo-url> ~/smart-display
+cd ~/smart-display
 chmod +x configure.sh
 ./configure.sh
 ```
@@ -252,12 +264,12 @@ sudo systemctl restart smart-display-touch-scroll
 
 OpenWakeWord model names are not magic phrases. A custom wake word like "Hey Felix" needs a trained `.onnx` model file.
 
-Recommended path on the Pi:
+Recommended path on the Pi (replace `~/smart-display` with wherever you cloned the repo):
 
 ```bash
-mkdir -p /home/jaker/TuneoutDisplay/models
-cp hey_fe_lix.onnx /home/jaker/TuneoutDisplay/models/hey_fe_lix.onnx
-sudo sed -i 's|^OWW_MODEL=.*|OWW_MODEL=/home/jaker/TuneoutDisplay/models/hey_fe_lix.onnx|' /etc/smart-display/assistant.env
+mkdir -p ~/smart-display/models
+cp hey_fe_lix.onnx ~/smart-display/models/hey_fe_lix.onnx
+sudo sed -i "s|^OWW_MODEL=.*|OWW_MODEL=$HOME/smart-display/models/hey_fe_lix.onnx|" /etc/smart-display/assistant.env
 sudo systemctl restart smart-display-assistant
 ```
 
@@ -382,6 +394,6 @@ View logs: `journalctl -u smart-display-touch-scroll -f`
 
 ---
 
-# License
+## License
 
 > This project is licensed under the terms of the GNU General Public License v3.0. See the LICENSE.txt file for details.

@@ -88,6 +88,50 @@ extension _DevHarnessShell on _RootShellState {
   }
 }
 
+/// Wraps an [_AdjustableCard] for a demo (adjustable) light at a fixed size so a
+/// widget test can assert the card fills its slot. Pass a `LayoutBuilder` as
+/// [child] to capture the constraints the card hands down.
+@visibleForTesting
+Widget buildAdjustableCardForTest({
+  required Widget child,
+  Size size = const Size(200, 100),
+  String entityId = 'light.demo_light',
+}) {
+  final catalog = EntityCatalog().._fillDemo();
+  return ConfigScope(
+    config: AppConfig(),
+    child: MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: HaScope(
+              client: HaClient(),
+              child: EntityScope(
+                catalog: catalog,
+                child: _AdjustableCard(
+                  card: CardSpec(
+                      id: 't',
+                      kind: CardKind.entity,
+                      entityId: entityId,
+                      col: 0,
+                      row: 0,
+                      w: 2,
+                      h: 1),
+                  onTap: () {},
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// Representative fake entities, one per controllable domain, in HA state shape
 /// (`{entity_id, state, attributes}`). Attribute values are chosen so the
 /// per-domain control widgets render their full surface.

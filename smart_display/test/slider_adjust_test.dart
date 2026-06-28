@@ -15,6 +15,25 @@ void main() {
     expect(CardSpec.fromJson(legacy).sliderReadout, isTrue); // default
   });
 
+  testWidgets('adjustable card fills its slot (regression: width-2 collapse)',
+      (tester) async {
+    late BoxConstraints captured;
+    await tester.pumpWidget(buildAdjustableCardForTest(
+      child: LayoutBuilder(builder: (ctx, c) {
+        captured = c;
+        return const SizedBox.expand();
+      }),
+    ));
+    await tester.pump();
+    // The card must be forced to fill its 200x100 slot (StackFit.expand), not
+    // shrink to its content.
+    expect(captured.maxWidth, 200);
+    expect(captured.maxHeight, 100);
+    expect(captured.minWidth, 200,
+        reason: 'card child must get tight constraints, not loose');
+    expect(captured.minHeight, 100);
+  });
+
   group('cardAdjustment', () {
     test('light brightness -> turn_on/brightness_pct', () {
       final a = cardAdjustment('light', {

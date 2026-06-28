@@ -2958,7 +2958,11 @@ class _AdjustableCardState extends State<_AdjustableCard> {
             },
           ),
         },
+        // StackFit.expand forces the card to fill its grid slot. Without it the
+        // Stack passes loose constraints and the card shrinks to its content
+        // size (e.g. a width-2 card rendered tiny).
         child: Stack(
+          fit: StackFit.expand,
           children: [
             widget.child,
             if (_dragPct != null)

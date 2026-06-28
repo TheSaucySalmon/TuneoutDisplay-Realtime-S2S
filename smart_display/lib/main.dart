@@ -1366,6 +1366,8 @@ String _cardKindLabel(CardKind k) {
       return 'HA Status';
     case CardKind.entity:
       return 'Entity';
+    case CardKind.group:
+      return 'Group';
   }
 }
 
@@ -2372,7 +2374,57 @@ class _AddPagePanelState extends State<_AddPagePanel> {
 const int kGridCols = 4;
 const int kGridRows = 4;
 
-enum CardKind { weather, camera, calendar, haStatus, entity }
+// NOTE: `kind` is persisted by enum index, so only ever APPEND new kinds.
+enum CardKind { weather, camera, calendar, haStatus, entity, group }
+
+/// A mini-button inside a [CardKind.group] card (Bubble-Card style). Three types:
+/// `button` (tap action), `slider` (press-hold drag a numeric value), `select`
+/// (pick from the entity's options).
+class SubButton {
+  String id;
+  String type; // 'button' | 'slider' | 'select'
+  String? entityId;
+  String? name;
+  String? icon; // reserved; v1 falls back to the entity icon
+  String tap; // button action: 'toggle' | 'more-info' | 'activate'
+  double? min, max, step; // slider bounds (optional; else derived from entity)
+
+  SubButton({
+    required this.id,
+    this.type = 'button',
+    this.entityId,
+    this.name,
+    this.icon,
+    this.tap = 'toggle',
+    this.min,
+    this.max,
+    this.step,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'entityId': entityId,
+        'name': name,
+        'icon': icon,
+        'tap': tap,
+        'min': min,
+        'max': max,
+        'step': step,
+      };
+
+  factory SubButton.fromJson(Map<String, dynamic> j) => SubButton(
+        id: j['id'] as String? ?? 's${DateTime.now().microsecondsSinceEpoch}',
+        type: j['type'] as String? ?? 'button',
+        entityId: j['entityId'] as String?,
+        name: j['name'] as String?,
+        icon: j['icon'] as String?,
+        tap: j['tap'] as String? ?? 'toggle',
+        min: (j['min'] as num?)?.toDouble(),
+        max: (j['max'] as num?)?.toDouble(),
+        step: (j['step'] as num?)?.toDouble(),
+      );
+}
 
 class CardSpec {
   final String id;
@@ -2412,6 +2464,10 @@ class CardSpec {
   // Calendar card (HA calendar card options).
   String initialView; // 'month' | 'day' | 'list'
 
+  // Group card (CardKind.group): an optional entity-backed header (entityId /
+  // name / showIcon) plus this list of sub-buttons rendered in a grid.
+  List<SubButton> subButtons;
+
   CardSpec({
     required this.id,
     required this.kind,
@@ -2437,7 +2493,8 @@ class CardSpec {
     this.forecastType = 'daily',
     this.roundTemp = false,
     this.initialView = 'month',
-  });
+    List<SubButton>? subButtons,
+  }) : subButtons = subButtons ?? <SubButton>[];
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -2464,6 +2521,7 @@ class CardSpec {
         'forecastType': forecastType,
         'roundTemp': roundTemp,
         'initialView': initialView,
+        'subButtons': subButtons.map((s) => s.toJson()).toList(),
       };
   factory CardSpec.fromJson(Map<String, dynamic> j) => CardSpec(
         id: j['id'] as String,
@@ -2492,6 +2550,9 @@ class CardSpec {
         forecastType: j['forecastType'] as String? ?? 'daily',
         roundTemp: j['roundTemp'] as bool? ?? false,
         initialView: j['initialView'] as String? ?? 'month',
+        subButtons: (j['subButtons'] as List?)
+            ?.map((e) => SubButton.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
 
@@ -3748,6 +3809,34 @@ Widget _cardWidget(CardSpec card) {
       return const RoomCard();
     case CardKind.entity:
       return _EntityCard(spec: card);
+    case CardKind.group:
+      return _GroupCard(spec: card);
+  }
+}
+
+/// Group card: an optional entity-backed header + a grid of [SubButton]s.
+/// (Increment 1: minimal placeholder render; the full header+grid lands next.)
+class _GroupCard extends StatelessWidget {
+  final CardSpec spec;
+  const _GroupCard({required this.spec});
+
+  @override
+  Widget build(BuildContext context) {
+    final title = spec.name ?? 'Group';
+    return LiquidGlass(
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title,
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700)),
+            Text('${spec.subButtons.length} sub-buttons',
+                style: const TextStyle(color: Color(0x99FFFFFF))),
+          ],
+        ),
+      ),
+    );
   }
 }
 

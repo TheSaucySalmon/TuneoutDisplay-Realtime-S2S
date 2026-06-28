@@ -1020,7 +1020,7 @@ class _EditBar extends StatelessWidget {
               const Spacer(),
               _round(Icons.palette_rounded, onTheme),
               const SizedBox(width: 10),
-              _round(Icons.add_rounded, () => _showEntityPicker(context)),
+              _round(Icons.add_rounded, () => _showAddMenu(context)),
               const SizedBox(width: 10),
               GestureDetector(
                 onTap: onDone,
@@ -1230,6 +1230,80 @@ void _showEntityPicker(BuildContext context, {void Function(String)? onPick}) {
   );
 }
 
+/// The "+" add-card flow: pick a card kind. Entity opens the entity picker;
+/// Group adds an empty group card and opens its editor.
+void _showAddMenu(BuildContext context) {
+  final layout = LayoutScope.of(context);
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (sheetCtx) => Container(
+      decoration: const BoxDecoration(
+        color: Color(0xF2121A24),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Text('Add card',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700)),
+          ),
+          _addMenuRow(Icons.widgets_outlined, 'Entity card',
+              'A single entity tile', () {
+            Navigator.pop(sheetCtx);
+            _showEntityPicker(context);
+          }),
+          _addMenuRow(Icons.dashboard_customize_rounded, 'Group',
+              'A header + a grid of sub-buttons', () {
+            Navigator.pop(sheetCtx);
+            _showCardSettings(context, layout.addGroup(), layout);
+          }),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _addMenuRow(
+        IconData icon, String title, String subtitle, VoidCallback onTap) =>
+    GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0x14FFFFFF),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.white, size: 22),
+            const SizedBox(width: 14),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600)),
+                Text(subtitle,
+                    style: const TextStyle(color: Color(0x99FFFFFF))),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
 /// Searchable list of all HA entities; tapping one adds a card for it (or, when
 /// [onPick] is given, hands the entity id back to the caller for rebinding).
 class _EntityPicker extends StatefulWidget {
@@ -1438,12 +1512,14 @@ class _CardEditorState extends State<_CardEditor> {
   int _tab = 0; // 0 Config · 1 Layout · 2 Style
   late final TextEditingController _name =
       TextEditingController(text: widget.card.name ?? '');
+  final TextEditingController _subName = TextEditingController();
 
   CardSpec get card => widget.card;
 
   @override
   void dispose() {
     _name.dispose();
+    _subName.dispose();
     super.dispose();
   }
 
@@ -1704,6 +1780,7 @@ class _CardEditorState extends State<_CardEditor> {
         if (card.kind == CardKind.haStatus)
           const _Note('Live Home Assistant connection + entity count. '
               'No per-card options beyond name, layout, and style.'),
+        if (card.kind == CardKind.group) ..._groupConfig(),
         if (_hasEntity) ...[
           const SizedBox(height: 16),
           _label('Tap action'),
@@ -1828,6 +1905,231 @@ class _CardEditorState extends State<_CardEditor> {
           ),
         ),
       ],
+    );
+  }
+
+  // ── Group card: header + sub-button management ──────────────────────────
+  List<Widget> _groupConfig() => [
+        const SizedBox(height: 8),
+        _label('Header entity (optional)'),
+        const SizedBox(height: 8),
+        _entityRow(),
+        if (card.entityId != null)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _set(() => card.entityId = null),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('Clear header entity (title only)',
+                  style: TextStyle(color: Color(0x99FFFFFF))),
+            ),
+          ),
+        const SizedBox(height: 16),
+        _label('Sub-buttons'),
+        const SizedBox(height: 8),
+        for (var i = 0; i < card.subButtons.length; i++) _subButtonRow(i),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _addSubButton,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0x40FFFFFF)),
+            ),
+            child: const Text('+ Add sub-button',
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
+        ),
+      ];
+
+  Widget _subButtonRow(int i) {
+    final sb = card.subButtons[i];
+    final icon = switch (sb.type) {
+      'slider' => Icons.tune,
+      'select' => Icons.list_rounded,
+      _ => Icons.touch_app_outlined,
+    };
+    final label = sb.name ?? sb.entityId ?? 'Button';
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _editSubButton(sb),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0x14FFFFFF),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: const Color(0xCCFFFFFF)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white)),
+            ),
+            _miniIcon(
+                Icons.keyboard_arrow_up,
+                i > 0
+                    ? () => _set(() => card.subButtons
+                        .insert(i - 1, card.subButtons.removeAt(i)))
+                    : null),
+            _miniIcon(
+                Icons.keyboard_arrow_down,
+                i < card.subButtons.length - 1
+                    ? () => _set(() => card.subButtons
+                        .insert(i + 1, card.subButtons.removeAt(i)))
+                    : null),
+            _miniIcon(Icons.close, () => _set(() => card.subButtons.removeAt(i))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _miniIcon(IconData icon, VoidCallback? onTap) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Icon(icon,
+              size: 20,
+              color: onTap == null
+                  ? const Color(0x33FFFFFF)
+                  : const Color(0xCCFFFFFF)),
+        ),
+      );
+
+  void _addSubButton() {
+    final sb = SubButton(id: 's${DateTime.now().microsecondsSinceEpoch}');
+    _set(() => card.subButtons.add(sb));
+    _editSubButton(sb);
+  }
+
+  void _editSubButton(SubButton sb) {
+    final catalog = EntityScope.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => EntityScope(
+        catalog: catalog,
+        child: StatefulBuilder(builder: (ctx, setSheet) {
+          void change(VoidCallback fn) {
+            _set(fn);
+            setSheet(() {});
+          }
+
+          Widget pickRow(String text, bool muted, VoidCallback onTap) =>
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onTap,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: const Color(0x14FFFFFF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: muted ? const Color(0x66FFFFFF) : Colors.white)),
+                ),
+              );
+
+          return Container(
+            padding: EdgeInsets.fromLTRB(
+                20, 12, 20, MediaQuery.viewInsetsOf(ctx).bottom + 28),
+            decoration: const BoxDecoration(
+              color: Color(0xF2121A24),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 5,
+                      decoration: BoxDecoration(
+                          color: const Color(0x40FFFFFF),
+                          borderRadius: BorderRadius.circular(3)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('Sub-button',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white)),
+                  const SizedBox(height: 16),
+                  _label('Type'),
+                  const SizedBox(height: 8),
+                  _options(const ['button', 'slider', 'select'],
+                      const ['Button', 'Slider', 'Select'], sb.type,
+                      (v) => change(() => sb.type = v)),
+                  const SizedBox(height: 16),
+                  _label('Entity'),
+                  const SizedBox(height: 8),
+                  pickRow(sb.entityId ?? 'Pick entity', sb.entityId == null,
+                      () => _showEntityPicker(ctx,
+                          onPick: (id) => change(() => sb.entityId = id))),
+                  const SizedBox(height: 16),
+                  _label('Name'),
+                  const SizedBox(height: 8),
+                  pickRow(sb.name ?? 'Default (entity name)', sb.name == null,
+                      () {
+                    _subName.text = sb.name ?? '';
+                    _showTextInput(ctx,
+                        title: 'Name',
+                        controller: _subName,
+                        onChanged: (v) => change(() =>
+                            sb.name = v.trim().isEmpty ? null : v.trim()));
+                  }),
+                  if (sb.type == 'button') ...[
+                    const SizedBox(height: 16),
+                    _label('Tap action'),
+                    const SizedBox(height: 8),
+                    _options(const ['toggle', 'activate', 'more-info'],
+                        const ['Toggle', 'Activate', 'More info'], sb.tap,
+                        (v) => change(() => sb.tap = v)),
+                  ],
+                  const SizedBox(height: 22),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      final idx = card.subButtons.indexOf(sb);
+                      if (idx >= 0) _set(() => card.subButtons.removeAt(idx));
+                      Navigator.pop(sheetCtx);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0x55FF453A)),
+                      ),
+                      child: const Text('Delete sub-button',
+                          style: TextStyle(
+                              color: Color(0xFFFF6961),
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ),
     );
   }
 
@@ -2673,6 +2975,23 @@ class AppLayout extends ChangeNotifier {
         page: activePage,
       )));
 
+  /// Add an empty group card on the active page; returns it (so the caller can
+  /// open its editor).
+  CardSpec addGroup() {
+    final c = CardSpec(
+      id: 'g${DateTime.now().millisecondsSinceEpoch}',
+      kind: CardKind.group,
+      col: 0,
+      row: 0,
+      w: 2,
+      h: 2,
+      page: activePage,
+      name: 'Group',
+    );
+    update(() => cards.add(c));
+    return c;
+  }
+
   void remove(String id) => update(() => cards.removeWhere((c) => c.id == id));
 
   /// Append a new blank page; returns its index.
@@ -2849,7 +3168,11 @@ class _GridDashboardState extends State<GridDashboard> {
 
     // Normal mode: tap runs the card's tap_action (more-info / toggle / none);
     // press-hold + horizontal drag adjusts an adjustable entity in place.
-    if (!widget.editing && card.entityId != null) {
+    // Group cards drive their own header/sub-button taps, so they skip the
+    // whole-card tap/drag wrapper; only entity cards get it.
+    if (!widget.editing &&
+        card.kind == CardKind.entity &&
+        card.entityId != null) {
       final id = card.entityId!;
       child = _AdjustableCard(
         card: card,

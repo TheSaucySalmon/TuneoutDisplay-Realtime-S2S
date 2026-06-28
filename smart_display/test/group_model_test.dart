@@ -64,6 +64,19 @@ void main() {
     expect(r.subButtons[1].type, 'slider');
   });
 
+  test('addGroup adds an empty group card on the active page', () {
+    final l = AppLayout(
+        [CardSpec(id: 'a', kind: CardKind.entity, col: 0, row: 0, w: 1, h: 1)],
+        pageCount: 2)
+      ..persist = false
+      ..activePage = 1;
+    final g = l.addGroup();
+    expect(g.kind, CardKind.group);
+    expect(g.page, 1);
+    expect(g.subButtons, isEmpty);
+    expect(l.cards.contains(g), isTrue);
+  });
+
   test('legacy card json (no subButtons) → empty, mutable list', () {
     final legacy = CardSpec(id: 'e', kind: CardKind.entity, col: 0, row: 0, w: 1, h: 1)
         .toJson()

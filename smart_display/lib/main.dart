@@ -3814,30 +3814,340 @@ Widget _cardWidget(CardSpec card) {
   }
 }
 
-/// Group card: an optional entity-backed header + a grid of [SubButton]s.
-/// (Increment 1: minimal placeholder render; the full header+grid lands next.)
+/// Group card (Bubble-Card style): an optional entity-backed header + a 2-column
+/// grid of [SubButton]s, all on the dashboard grid as one card.
 class _GroupCard extends StatelessWidget {
   final CardSpec spec;
   const _GroupCard({required this.spec});
 
   @override
   Widget build(BuildContext context) {
-    final title = spec.name ?? 'Group';
+    final hasHeader =
+        spec.entityId != null || (spec.name?.isNotEmpty ?? false);
     return LiquidGlass(
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: LayoutBuilder(builder: (ctx, c) {
+          const spacing = 8.0;
+          final itemW = ((c.maxWidth - spacing) / 2).clamp(0.0, c.maxWidth);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hasHeader) ...[
+                _GroupHeader(spec: spec),
+                const SizedBox(height: 10),
+              ],
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: spacing,
+                    runSpacing: spacing,
+                    children: [
+                      for (final sb in spec.subButtons)
+                        SizedBox(
+                            width: itemW,
+                            child: _SubButtonWidget(sb: sb, width: itemW)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+}
+
+/// The group's header pill: entity icon + name, tinted by the entity's state/
+/// color; tap toggles a toggleable entity, else opens more-info.
+class _GroupHeader extends StatelessWidget {
+  final CardSpec spec;
+  const _GroupHeader({required this.spec});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ConfigScope.of(context).accent;
+    final id = spec.entityId;
+    final cat = EntityScope.of(context);
+    final attrs =
+        id == null ? const {} : ((cat.state(id)?['attributes'] as Map?) ?? const {});
+    final state = id == null ? '' : (cat.state(id)?['state'] as String? ?? '');
+    final on = state == 'on';
+    final domain = id == null ? '' : entityDomain(id);
+    final name =
+        spec.name ?? (attrs['friendly_name'] as String?) ?? 'Group';
+    final color = id == null ? accent : sliderFillColor(domain, attrs, accent);
+    final icon =
+        id == null ? Icons.dashboard_customize_rounded : entityIcon(id, on);
+    return GestureDetector(
+      onTap: id == null
+          ? null
+          : () {
+              if (_kToggleable.contains(domain)) {
+                HaScope.of(context).callService(
+                    domain == 'group' ? 'homeassistant' : domain, 'toggle', id);
+              } else {
+                _showMoreInfo(context, id);
+              }
+            },
+      child: Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: (on || id == null) ? 0.9 : 0.45),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
           children: [
-            Text(title,
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w700)),
-            Text('${spec.subButtons.length} sub-buttons',
-                style: const TextStyle(color: Color(0x99FFFFFF))),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: const BoxDecoration(
+                  shape: BoxShape.circle, color: Color(0x33000000)),
+              child: Icon(icon, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+/// One sub-button: button (tap action), slider (press-hold drag), or select
+/// (tap → option picker). Tinted by its own entity's color.
+class _SubButtonWidget extends StatefulWidget {
+  final SubButton sb;
+  final double width;
+  const _SubButtonWidget({required this.sb, required this.width});
+  @override
+  State<_SubButtonWidget> createState() => _SubButtonWidgetState();
+}
+
+class _SubButtonWidgetState extends State<_SubButtonWidget> {
+  double? _dragPct;
+  double _startPct = 0;
+  DateTime _lastSent = DateTime.fromMillisecondsSinceEpoch(0);
+
+  SubButton get sb => widget.sb;
+  String? get _id => sb.entityId;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ConfigScope.of(context).accent;
+    final id = _id;
+    final cat = EntityScope.of(context);
+    final attrs =
+        id == null ? const {} : ((cat.state(id)?['attributes'] as Map?) ?? const {});
+    final state = id == null ? '' : (cat.state(id)?['state'] as String? ?? '');
+    final on = state == 'on';
+    final domain = id == null ? '' : entityDomain(id);
+    final name =
+        sb.name ?? (attrs['friendly_name'] as String?) ?? id ?? 'Button';
+    final color = sliderFillColor(domain, attrs, accent);
+    final icon = id == null ? Icons.circle_outlined : entityIcon(id, on);
+
+    if (sb.type == 'slider' && id != null) {
+      final adj = cardAdjustment(domain, attrs);
+      if (adj != null) return _sliderPill(adj, name, icon, color, domain, id);
+    }
+    if (sb.type == 'select' && id != null) {
+      final opts = (attrs['options'] as List?)?.cast<String>() ?? const [];
+      return _pill(icon, '$name · ${state.isEmpty ? '—' : state}',
+          on ? color : null, () => _showSelectPicker(context, id, opts, state));
+    }
+    return _pill(icon, name, on ? color : null,
+        id == null ? () {} : () => _subButtonTap(context, sb));
+  }
+
+  Widget _pill(IconData icon, String label, Color? bg, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: bg == null
+                ? const Color(0x1FFFFFFF)
+                : bg.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16, color: Colors.white),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _sliderPill(CardAdjust adj, String name, IconData icon, Color color,
+      String domain, String id) {
+    final pct = (_dragPct ?? adj.value).clamp(0, 100).toDouble();
+    return LayoutBuilder(builder: (ctx, c) {
+      final w = c.maxWidth <= 0 ? widget.width : c.maxWidth;
+      return RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: <Type, GestureRecognizerFactory>{
+          LongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+            () => LongPressGestureRecognizer(
+                duration: const Duration(milliseconds: 300)),
+            (r) {
+              r.onLongPressStart = (_) =>
+                  setState(() => _dragPct = _startPct = adj.value);
+              r.onLongPressMoveUpdate = (d) {
+                final np = (_startPct + d.localOffsetFromOrigin.dx / w * 100)
+                    .clamp(0, 100)
+                    .toDouble();
+                setState(() => _dragPct = np);
+                _commit(adj, np.round(), domain, id);
+              };
+              r.onLongPressEnd = (_) {
+                _commit(adj, (_dragPct ?? adj.value).round(), domain, id,
+                    force: true);
+                setState(() => _dragPct = null);
+              };
+            },
+          ),
+        },
+        child: SizedBox(
+          height: 44,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: Color(0x1FFFFFFF)),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: (pct / 100).clamp(0.0, 1.0),
+                    child: ColoredBox(color: color.withValues(alpha: 0.45)),
+                  ),
+                ),
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(icon, size: 16, color: Colors.white),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text('$name · ${pct.round()}%',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  void _commit(CardAdjust adj, int pct, String domain, String id,
+      {bool force = false}) {
+    final now = DateTime.now();
+    if (!force && now.difference(_lastSent).inMilliseconds < 180) return;
+    _lastSent = now;
+    HaScope.of(context).callService(domain, adj.service, id, adj.data(pct));
+  }
+}
+
+/// Runs a button sub-button's tap action against its entity.
+void _subButtonTap(BuildContext context, SubButton sb) {
+  final id = sb.entityId;
+  if (id == null) return;
+  final domain = entityDomain(id);
+  final ha = HaScope.of(context);
+  switch (sb.tap) {
+    case 'more-info':
+      _showMoreInfo(context, id);
+      break;
+    case 'activate':
+      final svc = switch (domain) {
+        'button' || 'input_button' => 'press',
+        'automation' => 'trigger',
+        _ => 'turn_on', // scene, script, …
+      };
+      ha.callService(domain, svc, id);
+      break;
+    default: // 'toggle'
+      ha.callService(domain == 'group' ? 'homeassistant' : domain, 'toggle', id);
+  }
+}
+
+/// Bottom-sheet option picker for a `select`/`input_select` sub-button.
+void _showSelectPicker(
+    BuildContext context, String id, List<String> options, String current) {
+  final ha = HaScope.of(context);
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => Container(
+      decoration: const BoxDecoration(
+        color: Color(0xF2121A24),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final o in options)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                ha.callService(
+                    entityDomain(id), 'select_option', id, {'option': o});
+                Navigator.pop(context);
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(o,
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 16)),
+                    ),
+                    if (o == current)
+                      const Icon(Icons.check, color: Colors.white, size: 20),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 }
 
 String entityDomain(String id) {

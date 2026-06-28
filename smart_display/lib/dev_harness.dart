@@ -132,6 +132,59 @@ Widget buildAdjustableCardForTest({
   );
 }
 
+/// Renders a single group sub-button at a fixed width for widget tests (avoids
+/// the LiquidGlass scope stack that the full _GroupCard needs).
+@visibleForTesting
+Widget buildSubButtonForTest(SubButton sb, {double width = 160}) {
+  final catalog = EntityCatalog().._fillDemo();
+  return ConfigScope(
+    config: AppConfig(),
+    child: MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: width,
+            child: HaScope(
+              client: HaClient(),
+              child: EntityScope(
+                catalog: catalog,
+                child: _SubButtonWidget(sb: sb, width: width),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Renders a group header for widget tests.
+@visibleForTesting
+Widget buildGroupHeaderForTest(CardSpec spec, {double width = 320}) {
+  final catalog = EntityCatalog().._fillDemo();
+  return ConfigScope(
+    config: AppConfig(),
+    child: MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            width: width,
+            child: HaScope(
+              client: HaClient(),
+              child: EntityScope(
+                catalog: catalog,
+                child: _GroupHeader(spec: spec),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// Representative fake entities, one per controllable domain, in HA state shape
 /// (`{entity_id, state, attributes}`). Attribute values are chosen so the
 /// per-domain control widgets render their full surface.
@@ -219,6 +272,14 @@ const List<Map<String, dynamic>> _kDemoEntities = [
       'sound_mode_list': ['Stereo', 'Surround', 'Night'],
       'media_title': 'Demo Track',
       'media_artist': 'Demo Artist',
+    },
+  },
+  {
+    'entity_id': 'select.demo_select',
+    'state': 'Cool',
+    'attributes': {
+      'friendly_name': 'Mode',
+      'options': ['Cool', 'Warm', 'Auto'],
     },
   },
   {

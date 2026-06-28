@@ -4096,20 +4096,6 @@ class _CameraCardState extends State<CameraCard> {
                   child: Icon(Icons.videocam_rounded,
                       size: 64 * s, color: const Color(0x33FFFFFF)),
                 ),
-              Positioned(
-                left: 12 * s,
-                top: 10 * s,
-                child: ClockText(
-                  builder: (_, now) => Text(
-                    '${now.year}-${now.month.toString().padLeft(2, '0')}-'
-                    '${now.day.toString().padLeft(2, '0')}  ${_hourMinuteAmPm(now)}',
-                    style: TextStyle(
-                        fontSize: 12 * s,
-                        color: const Color(0xCCFFFFFF),
-                        shadows: const [Shadow(blurRadius: 4)]),
-                  ),
-                ),
-              ),
               if (spec?.showName ?? true)
                 Positioned(
                   bottom: 14 * s,
